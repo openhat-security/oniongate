@@ -150,6 +150,10 @@ mod unix_daemon {
             HelperRequest::Ping => HelperResponse::ok("pong"),
             HelperRequest::KillSwitchEnable => super::executor::kill_switch_enable(),
             HelperRequest::KillSwitchDisable => super::executor::kill_switch_disable(),
+            HelperRequest::NetworkLockEnable { tor_path } => {
+                super::executor::network_lock_enable(&tor_path)
+            }
+            HelperRequest::NetworkLockDisable => super::executor::network_lock_disable(),
         }
     }
 }
@@ -165,45 +169,86 @@ mod executor {
 
     const PFCTL: &str = "/sbin/pfctl";
     const PF_ANCHOR: &str = "tor.socks.gui";
+    const PF_LOCK_ANCHOR: &str = "tor.socks.gui.lock";
     const PF_RULES_PATH: &str = "/var/run/oniongate-pf.conf";
+    const PF_LOCK_RULES_PATH: &str = "/var/run/oniongate-pf-lock.conf";
     // Baked, fixed policy — never supplied by the client.
     const PF_RULES: &str = "\
-# OnionGate — UDP/QUIC leak protection
-pass out quick on lo0 proto udp all
-pass out quick proto udp to 127.0.0.1
+# OnionGate — steady-state UDP/QUIC + IPv6 leak protection
+pass out quick on lo0 all
+pass out quick to 127.0.0.1
+pass out quick to ::1
+block drop out quick inet6 from any to any
+block drop out quick proto udp from any to any
+";
+    const PF_LOCK_RULES: &str = "\
+# OnionGate — transition network lock (UDP/QUIC + IPv6)
+pass out quick on lo0 all
+pass out quick to 127.0.0.1
+pass out quick to ::1
+block drop out quick inet6 from any to any
 block drop out quick proto udp from any to any
 ";
 
-    pub fn kill_switch_enable() -> HelperResponse {
+    fn load_anchor(anchor: &str, path: &str, rules: &str) -> HelperResponse {
         if !Path::new(PFCTL).exists() {
             return HelperResponse::err("pfctl not found");
         }
-        if let Err(e) = fs::write(PF_RULES_PATH, PF_RULES) {
+        if let Err(e) = fs::write(path, rules) {
             return HelperResponse::err(format!("write pf rules: {e}"));
         }
-        match Command::new(PFCTL)
-            .args(["-a", PF_ANCHOR, "-f", PF_RULES_PATH])
-            .status()
-        {
+        match Command::new(PFCTL).args(["-a", anchor, "-f", path]).status() {
             Ok(s) if s.success() => {}
             Ok(s) => return HelperResponse::err(format!("pfctl load failed: {s}")),
             Err(e) => return HelperResponse::err(format!("pfctl load error: {e}")),
         }
         let _ = Command::new(PFCTL).arg("-e").status();
-        HelperResponse::ok("Kill switch enabled (pf UDP/QUIC block)")
+        HelperResponse::ok("pf rules loaded")
     }
 
-    pub fn kill_switch_disable() -> HelperResponse {
+    fn flush_anchor(anchor: &str) -> HelperResponse {
         if !Path::new(PFCTL).exists() {
             return HelperResponse::err("pfctl not found");
         }
         match Command::new(PFCTL)
-            .args(["-a", PF_ANCHOR, "-F", "all"])
+            .args(["-a", anchor, "-F", "all"])
             .status()
         {
-            Ok(s) if s.success() => HelperResponse::ok("Kill switch disabled"),
+            Ok(s) if s.success() => HelperResponse::ok("pf anchor flushed"),
             Ok(s) => HelperResponse::err(format!("pfctl flush failed: {s}")),
             Err(e) => HelperResponse::err(format!("pfctl flush error: {e}")),
+        }
+    }
+
+    pub fn kill_switch_enable() -> HelperResponse {
+        match load_anchor(PF_ANCHOR, PF_RULES_PATH, PF_RULES) {
+            HelperResponse { ok: true, .. } => {
+                HelperResponse::ok("Kill switch enabled (pf UDP/QUIC + IPv6 block)")
+            }
+            other => other,
+        }
+    }
+
+    pub fn kill_switch_disable() -> HelperResponse {
+        match flush_anchor(PF_ANCHOR) {
+            HelperResponse { ok: true, .. } => HelperResponse::ok("Kill switch disabled"),
+            other => other,
+        }
+    }
+
+    pub fn network_lock_enable(_tor_path: &str) -> HelperResponse {
+        match load_anchor(PF_LOCK_ANCHOR, PF_LOCK_RULES_PATH, PF_LOCK_RULES) {
+            HelperResponse { ok: true, .. } => {
+                HelperResponse::ok("Network lock enabled (pf UDP/QUIC + IPv6)")
+            }
+            other => other,
+        }
+    }
+
+    pub fn network_lock_disable() -> HelperResponse {
+        match flush_anchor(PF_LOCK_ANCHOR) {
+            HelperResponse { ok: true, .. } => HelperResponse::ok("Network lock disabled"),
+            other => other,
         }
     }
 
@@ -212,7 +257,7 @@ block drop out quick proto udp from any to any
         use super::PF_RULES;
 
         #[test]
-        fn loopback_exceptions_precede_the_quick_udp_block() {
+        fn loopback_exceptions_precede_the_quick_blocks() {
             let block = PF_RULES
                 .lines()
                 .position(|line| line.starts_with("block drop"))
@@ -224,6 +269,8 @@ block drop out quick proto udp from any to any
             {
                 assert!(pass < block);
             }
+            assert!(PF_RULES.contains("inet6"));
+            assert!(PF_RULES.contains("::1"));
         }
     }
 }
@@ -234,6 +281,7 @@ mod executor {
     use tor_socks_gui_lib::helper::HelperResponse;
 
     const TABLE: &str = "tor_socks_gui_ks";
+    const LOCK_TABLE: &str = "tor_socks_gui_lock";
 
     fn run_script(script: &str) -> Result<(), String> {
         let status = Command::new("sh")
@@ -247,21 +295,24 @@ mod executor {
             .ok_or_else(|| format!("nft script failed: {status}"))
     }
 
+    fn enable_table(table: &str) -> String {
+        format!(
+            "nft list table inet {table} >/dev/null 2>&1 && nft delete table inet {table} || true; \
+             nft add table inet {table} && \
+             nft 'add chain inet {table} output {{ type filter hook output priority 0; policy accept; }}' && \
+             nft add rule inet {table} output oif lo accept && \
+             nft add rule inet {table} output ip daddr 127.0.0.1 accept && \
+             nft add rule inet {table} output ip6 daddr ::1 accept && \
+             nft add rule inet {table} output ip6 daddr != ::1 drop && \
+             nft add rule inet {table} output udp dport 53 drop && \
+             nft add rule inet {table} output udp dport 443 drop && \
+             nft add rule inet {table} output meta l4proto udp drop"
+        )
+    }
+
     pub fn kill_switch_enable() -> HelperResponse {
-        // Baked, fixed policy — never supplied by the client.
-        let script = format!(
-            "nft list table inet {TABLE} >/dev/null 2>&1 && nft delete table inet {TABLE} || true; \
-             nft add table inet {TABLE} && \
-             nft 'add chain inet {TABLE} output {{ type filter hook output priority 0; policy accept; }}' && \
-             nft add rule inet {TABLE} output oif lo accept && \
-             nft add rule inet {TABLE} output ip daddr 127.0.0.1 accept && \
-             nft add rule inet {TABLE} output ip6 daddr ::1 accept && \
-             nft add rule inet {TABLE} output udp dport 53 drop && \
-             nft add rule inet {TABLE} output udp dport 443 drop && \
-             nft add rule inet {TABLE} output meta l4proto udp drop"
-        );
-        match run_script(&script) {
-            Ok(()) => HelperResponse::ok("Kill switch enabled (nftables UDP/QUIC block)"),
+        match run_script(&enable_table(TABLE)) {
+            Ok(()) => HelperResponse::ok("Kill switch enabled (nftables UDP/QUIC + IPv6 block)"),
             Err(e) => HelperResponse::err(e),
         }
     }
@@ -274,16 +325,40 @@ mod executor {
             Err(e) => HelperResponse::err(e),
         }
     }
+
+    pub fn network_lock_enable(_tor_path: &str) -> HelperResponse {
+        match run_script(&enable_table(LOCK_TABLE)) {
+            Ok(()) => HelperResponse::ok("Network lock enabled (nftables UDP/QUIC + IPv6)"),
+            Err(e) => HelperResponse::err(e),
+        }
+    }
+
+    pub fn network_lock_disable() -> HelperResponse {
+        match run_script(&format!(
+            "nft delete table inet {LOCK_TABLE} 2>/dev/null || true"
+        )) {
+            Ok(()) => HelperResponse::ok("Network lock disabled"),
+            Err(e) => HelperResponse::err(e),
+        }
+    }
 }
 
 // ============================ Windows ============================
 
 #[cfg(windows)]
 mod executor {
+    use std::path::Path;
     use std::process::Command;
     use tor_socks_gui_lib::helper::HelperResponse;
 
     const RULE: &str = "OnionGate UDP Internet Guard";
+    const RULE_V6: &str = "OnionGate IPv6 Internet Guard";
+    const RULE_V6_LO: &str = "OnionGate IPv6 Loopback Allow";
+    const LOCK_UDP: &str = "OnionGate Transition UDP Lock";
+    const LOCK_V6: &str = "OnionGate Transition IPv6 Lock";
+    const LOCK_V6_LO: &str = "OnionGate Transition IPv6 Loopback Allow";
+    const LOCK_TCP: &str = "OnionGate Transition TCP Lock";
+    const LOCK_TOR_ALLOW: &str = "OnionGate Transition Tor Allow";
 
     fn powershell(script: &str) -> Result<(), String> {
         let status = Command::new("powershell.exe")
@@ -296,23 +371,98 @@ mod executor {
             .ok_or_else(|| format!("powershell failed: {status}"))
     }
 
+    fn validate_tor_path(tor_path: &str) -> Result<&str, String> {
+        if tor_path.is_empty() {
+            return Ok("");
+        }
+        let path = Path::new(tor_path);
+        if !path.is_absolute() {
+            return Err("tor_path must be absolute".into());
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if name != "tor.exe" && name != "tor" {
+            return Err("tor_path must end with tor.exe".into());
+        }
+        if !path.is_file() {
+            return Err("tor_path does not exist".into());
+        }
+        Ok(tor_path)
+    }
+
     pub fn kill_switch_enable() -> HelperResponse {
         let script = format!(
             "Get-NetFirewallRule -DisplayName '{RULE}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; \
-             New-NetFirewallRule -DisplayName '{RULE}' -Direction Outbound -Action Block -Protocol UDP -RemoteAddress Internet -Profile Any | Out-Null"
+             Get-NetFirewallRule -DisplayName '{RULE_V6}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; \
+             Get-NetFirewallRule -DisplayName '{RULE_V6_LO}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; \
+             New-NetFirewallRule -DisplayName '{RULE}' -Direction Outbound -Action Block -Protocol UDP -RemoteAddress Internet -Profile Any | Out-Null; \
+             New-NetFirewallRule -DisplayName '{RULE_V6_LO}' -Direction Outbound -Action Allow -Protocol Any -RemoteAddress '::1' -Profile Any | Out-Null; \
+             New-NetFirewallRule -DisplayName '{RULE_V6}' -Direction Outbound -Action Block -Protocol Any -RemoteAddress '::/0' -Profile Any | Out-Null"
         );
         match powershell(&script) {
-            Ok(()) => HelperResponse::ok("Windows UDP/QUIC Internet guard enabled"),
+            Ok(()) => HelperResponse::ok("Windows UDP/QUIC and IPv6 Internet guard enabled"),
             Err(e) => HelperResponse::err(e),
         }
     }
 
     pub fn kill_switch_disable() -> HelperResponse {
         let script = format!(
-            "Get-NetFirewallRule -DisplayName '{RULE}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule"
+            "Get-NetFirewallRule -DisplayName '{RULE}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; \
+             Get-NetFirewallRule -DisplayName '{RULE_V6}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; \
+             Get-NetFirewallRule -DisplayName '{RULE_V6_LO}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule"
         );
         match powershell(&script) {
-            Ok(()) => HelperResponse::ok("Windows UDP/QUIC Internet guard disabled"),
+            Ok(()) => HelperResponse::ok("Windows UDP/QUIC and IPv6 Internet guard disabled"),
+            Err(e) => HelperResponse::err(e),
+        }
+    }
+
+    pub fn network_lock_enable(tor_path: &str) -> HelperResponse {
+        let tor_path = match validate_tor_path(tor_path) {
+            Ok(p) => p,
+            Err(e) => return HelperResponse::err(e),
+        };
+        let tor_allow = if tor_path.is_empty() {
+            String::new()
+        } else {
+            let escaped = tor_path.replace('\'', "''");
+            format!(
+                "Get-NetFirewallRule -DisplayName '{LOCK_TOR_ALLOW}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; \
+                 New-NetFirewallRule -DisplayName '{LOCK_TOR_ALLOW}' -Direction Outbound -Action Allow -Program '{escaped}' -RemoteAddress Any -Profile Any | Out-Null; "
+            )
+        };
+        let script = format!(
+            "{tor_allow}\
+             Get-NetFirewallRule -DisplayName '{LOCK_UDP}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; \
+             Get-NetFirewallRule -DisplayName '{LOCK_V6}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; \
+             Get-NetFirewallRule -DisplayName '{LOCK_V6_LO}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; \
+             Get-NetFirewallRule -DisplayName '{LOCK_TCP}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; \
+             New-NetFirewallRule -DisplayName '{LOCK_UDP}' -Direction Outbound -Action Block -Protocol UDP -RemoteAddress Internet -Profile Any | Out-Null; \
+             New-NetFirewallRule -DisplayName '{LOCK_V6_LO}' -Direction Outbound -Action Allow -Protocol Any -RemoteAddress '::1' -Profile Any | Out-Null; \
+             New-NetFirewallRule -DisplayName '{LOCK_V6}' -Direction Outbound -Action Block -Protocol Any -RemoteAddress '::/0' -Profile Any | Out-Null; \
+             New-NetFirewallRule -DisplayName '{LOCK_TCP}' -Direction Outbound -Action Block -Protocol TCP -RemoteAddress Internet -Profile Any | Out-Null"
+        );
+        match powershell(&script) {
+            Ok(()) => HelperResponse::ok(
+                "Network lock enabled (UDP/IPv6/TCP blocked; Tor allowed when path provided)",
+            ),
+            Err(e) => HelperResponse::err(e),
+        }
+    }
+
+    pub fn network_lock_disable() -> HelperResponse {
+        let script = format!(
+            "Get-NetFirewallRule -DisplayName '{LOCK_UDP}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; \
+             Get-NetFirewallRule -DisplayName '{LOCK_V6}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; \
+             Get-NetFirewallRule -DisplayName '{LOCK_V6_LO}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; \
+             Get-NetFirewallRule -DisplayName '{LOCK_TCP}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; \
+             Get-NetFirewallRule -DisplayName '{LOCK_TOR_ALLOW}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule"
+        );
+        match powershell(&script) {
+            Ok(()) => HelperResponse::ok("Network lock disabled"),
             Err(e) => HelperResponse::err(e),
         }
     }
@@ -402,6 +552,12 @@ mod windows_daemon {
                     Ok(HelperRequest::Ping) => HelperResponse::ok("pong"),
                     Ok(HelperRequest::KillSwitchEnable) => super::executor::kill_switch_enable(),
                     Ok(HelperRequest::KillSwitchDisable) => super::executor::kill_switch_disable(),
+                    Ok(HelperRequest::NetworkLockEnable { tor_path }) => {
+                        super::executor::network_lock_enable(&tor_path)
+                    }
+                    Ok(HelperRequest::NetworkLockDisable) => {
+                        super::executor::network_lock_disable()
+                    }
                     Err(e) => HelperResponse::err(format!("bad request: {e}")),
                 };
                 let mut inner = reader.into_inner();

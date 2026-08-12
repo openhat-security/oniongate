@@ -23,12 +23,17 @@ import type {
   SystemView,
   Tab,
   TorLogs,
+  EgressWatch,
+  KillClearnetIdentityResult,
 } from "@/lib/types";
 
 export function useTorApp() {
   const [tab, setTab] = useState<Tab>("home");
   const [systemView, setSystemView] = useState<SystemView>("checkup");
   const [settingsView, setSettingsView] = useState<SettingsView>("preferences");
+  const [verifyFlowFilter, setVerifyFlowFilter] = useState<
+    "all" | "through_tor" | "clearnet" | "listen"
+  >("all");
   const [hardenFocusId, setHardenFocusId] = useState<string | null>(null);
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [ips, setIps] = useState<IpReport | null>(null);
@@ -58,6 +63,7 @@ export function useTorApp() {
   const [issuedCredential, setIssuedCredential] =
     useState<IssuedCredential | null>(null);
   const [onionError, setOnionError] = useState<string | null>(null);
+  const [egressWatch, setEgressWatch] = useState<EgressWatch | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +74,7 @@ export function useTorApp() {
   }, []);
 
   const refreshIps = useCallback(async () => {
-    setIps(await invoke<IpReport>("refresh_ips"));
+    setIps(await invoke<IpReport>("get_ips"));
   }, []);
 
   const refreshDetect = useCallback(async () => {
@@ -100,6 +106,10 @@ export function useTorApp() {
 
   const refreshSession = useCallback(async () => {
     setSession(await invoke<SessionOverview>("get_session_overview"));
+  }, []);
+
+  const refreshEgressWatch = useCallback(async () => {
+    setEgressWatch(await invoke<EgressWatch>("get_egress_watch"));
   }, []);
 
   const refreshOnionHost = useCallback(async () => {
@@ -159,7 +169,7 @@ export function useTorApp() {
       setExitDraft(s.exit_country);
       setShellProxy(shell);
       setExitCountries(countries);
-      const report = await invoke<IpReport>("refresh_ips");
+      const report = await invoke<IpReport>("get_ips");
       setIps(report);
     } catch (e) {
       const msg = typeof e === "string" ? e : String(e);
@@ -176,9 +186,10 @@ export function useTorApp() {
     const id = window.setInterval(() => {
       void refreshStatus();
       void refreshSession();
+      void refreshIps();
     }, (settings?.status_poll_secs ?? 4) * 1000);
     return () => window.clearInterval(id);
-  }, [refreshStatus, refreshSession, settings?.status_poll_secs]);
+  }, [refreshStatus, refreshSession, refreshIps, settings?.status_poll_secs]);
 
   useEffect(() => {
     // Network/Bridges live under Connect; Checkup/Harden/Startup Items under
@@ -198,6 +209,9 @@ export function useTorApp() {
     if (tab === "host") {
       void refreshOnionHost();
     }
+    if (tab === "verify") {
+      void refreshEgressWatch();
+    }
   }, [
     tab,
     refreshDetect,
@@ -206,6 +220,7 @@ export function useTorApp() {
     refreshSnowflake,
     refreshHarden,
     refreshOnionHost,
+    refreshEgressWatch,
   ]);
 
   // Apply the theme setting: toggle the `.dark` class on <html>, following the
@@ -234,13 +249,26 @@ export function useTorApp() {
   const tunOn = status?.tun.running ?? false;
 
   useEffect(() => {
+    if (!torOn && tab !== "verify") return;
+    void refreshEgressWatch();
+    const id = window.setInterval(() => {
+      void refreshEgressWatch();
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, [torOn, tab, refreshEgressWatch]);
+
+  useEffect(() => {
     void refreshSession();
   }, [refreshSession, torOn]);
 
   const protectionLabel = useMemo(() => {
     const phase = status?.session_phase ?? "disconnected";
     if (phase === "recovering") return "Recovering";
-    if (phase === "connecting") return "Connecting";
+    if (phase === "connecting") {
+      return status?.network_lock?.active
+        ? "Connecting · network locked"
+        : "Connecting";
+    }
     if (phase === "degraded") return "Degraded";
     if (!torOn) return phase === "protected" ? "Degraded" : "Disconnected";
     if (phase !== "protected") return "Tor ready";
@@ -274,26 +302,32 @@ export function useTorApp() {
     status?.kill_switch,
     status?.firewall.active,
     status?.firewall.verified_live,
+    status?.network_lock?.active,
     status?.bridges_enabled,
   ]);
 
+  const connectTor = () => {
+    if (busy || !status?.tor_installed || torOn) return;
+    void run(async () => invoke<string>("start_tor"));
+  };
+
+  const disconnectTor = () => {
+    if (busy || !torOn) return;
+    void run(async () => invoke<string>("stop_tor"));
+  };
+
   const toggleTor = () => {
     if (busy || !status?.tor_installed) return;
-    void run(
-      async () =>
-        torOn ? invoke<string>("stop_tor") : invoke<string>("start_tor"),
-      { refreshIps: !torOn },
-    );
+    if (torOn) disconnectTor();
+    else connectTor();
   };
 
   const toggleProxy = () => {
     if (busy || !status?.proxy.supported || !torOn) return;
-    void run(
-      () =>
-        proxyOn
-          ? invoke<string>("disable_proxy")
-          : invoke<string>("enable_proxy"),
-      { refreshIps: !proxyOn },
+    void run(() =>
+      proxyOn
+        ? invoke<string>("disable_proxy")
+        : invoke<string>("enable_proxy"),
     );
   };
 
@@ -318,6 +352,16 @@ export function useTorApp() {
       const result = await invoke<NewIdentityResult>("new_identity");
       setIps(result.ips);
       return result.message;
+    });
+
+  const killClearnetAndNewIdentity = () =>
+    void run(async () => {
+      const result = await invoke<KillClearnetIdentityResult>(
+        "kill_clearnet_and_new_identity",
+      );
+      setIps(result.identity.ips);
+      await refreshEgressWatch();
+      return result.detail;
     });
 
   // Changing the exit country pins ExitNodes and rotates the circuit (NEWNYM),
@@ -512,6 +556,8 @@ export function useTorApp() {
     setSystemView,
     settingsView,
     setSettingsView,
+    verifyFlowFilter,
+    setVerifyFlowFilter,
     hardenFocusId,
     setHardenFocusId,
     status,
@@ -556,6 +602,8 @@ export function useTorApp() {
     refreshDetect,
     refreshShellProxy,
     refreshSession,
+    refreshEgressWatch,
+    egressWatch,
     onionProjects,
     permanentSites,
     onionAudits,
@@ -574,9 +622,12 @@ export function useTorApp() {
     setPermanentSiteAuth,
     auditPermanentSite,
     toggleTor,
+    connectTor,
+    disconnectTor,
     toggleProxy,
     saveSettings,
     newIdentity,
+    killClearnetAndNewIdentity,
     applyExitCountry,
     fetchBridges,
     saveBridges,

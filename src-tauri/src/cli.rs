@@ -30,7 +30,11 @@ enum Command {
     /// Best-effort cleanup using the recovery journal and live process discovery.
     Stop,
     /// Request a new Tor identity (NEWNYM).
-    Newnym,
+    Newnym {
+        /// Terminate processes with live clearnet sockets, then NEWNYM.
+        #[arg(long)]
+        kill_clearnet: bool,
+    },
     /// List configured bridge lines.
     Bridges,
     /// Print current settings as JSON.
@@ -119,7 +123,7 @@ pub async fn run(args: &[String]) -> i32 {
         Command::Status => status().await,
         Command::Start => start().await,
         Command::Stop => stop().await,
-        Command::Newnym => report(tor::new_identity().await),
+        Command::Newnym { kill_clearnet } => newnym(kill_clearnet).await,
         Command::Bridges => {
             let s = settings::load();
             if s.bridge_lines.is_empty() {
@@ -157,6 +161,17 @@ fn report(result: Result<String, String>) -> i32 {
     }
 }
 
+async fn newnym(kill_clearnet: bool) -> i32 {
+    if kill_clearnet {
+        let _ = crate::egress_watch::sample_now();
+        match crate::apps_lifecycle::kill_clearnet_processes().await {
+            Ok(kill) => println!("{}", kill.detail),
+            Err(e) => return fail(e),
+        }
+    }
+    report(tor::new_identity().await)
+}
+
 async fn status() -> i32 {
     let s = settings::load();
     println!("tor_installed={}", tor::find_tor_binary().is_some());
@@ -177,6 +192,9 @@ async fn status() -> i32 {
         crate::onion_service::persistent::list().len()
     );
     println!("temporary_sites={}", crate::onion_service::list().len());
+    let watch = crate::egress_watch::sample_now();
+    println!("egress_watch_active={}", watch.watching);
+    println!("egress_bypass={}", watch.bypass);
     if tor::control_reachable() {
         match tor::bootstrap_progress().await {
             Ok(p) => println!("bootstrap={p}"),
@@ -436,5 +454,19 @@ mod tests {
         assert!(Cli::try_parse_from(["oniongate", "host", "auth", "rm", "blog", "alice"]).is_ok());
         assert!(Cli::try_parse_from(["oniongate", "host", "auth", "off", "blog"]).is_ok());
         assert!(Cli::try_parse_from(["oniongate", "host", "auth", "add", "blog"]).is_err());
+    }
+
+    #[test]
+    fn newnym_kill_clearnet_flag_parses() {
+        let cli = Cli::try_parse_from(["oniongate", "newnym", "--kill-clearnet"]).unwrap();
+        match cli.command {
+            Some(Command::Newnym { kill_clearnet }) => assert!(kill_clearnet),
+            _ => panic!("expected newnym"),
+        }
+        let cli = Cli::try_parse_from(["oniongate", "newnym"]).unwrap();
+        match cli.command {
+            Some(Command::Newnym { kill_clearnet }) => assert!(!kill_clearnet),
+            _ => panic!("expected newnym"),
+        }
     }
 }

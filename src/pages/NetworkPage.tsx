@@ -157,12 +157,12 @@ export function NetworkPage({
                   label: settings.kill_switch ? "On" : "Off",
                   tone: settings.kill_switch ? "ok" : "default",
                 }}
-                description="Blocks clearnet UDP/QUIC leaks (admin). In TUN mode, strict_route also fails closed for TCP if Tor drops."
-                risk="Does not replace careful app behavior — apps that ignore SOCKS/TUN can still leak."
+                description="Steady-state block for clearnet UDP/QUIC and IPv6 after you are Protected. Connect/reconnect already arms a separate network lock so traffic cannot leak during bootstrap."
+                risk="Does not replace careful app behavior — apps that ignore SOCKS/TUN can still leak TCP in proxy mode."
               />
             </span>
           }
-          description="Block UDP/QUIC leaks (admin). TUN uses strict_route for TCP."
+          description="Steady-state UDP/QUIC + IPv6 block (admin). Transitions always lock the network."
         >
           <Switch
             checked={settings.kill_switch}

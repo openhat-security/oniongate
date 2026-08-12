@@ -55,6 +55,14 @@ export type SessionPhase =
   | "degraded"
   | "recovering";
 
+export type NetworkLockStatus = {
+  supported: boolean;
+  active: boolean;
+  verified_live: boolean;
+  marker_active: boolean;
+  detail: string;
+};
+
 export type AppStatus = {
   tor_installed: boolean;
   tor_path: string | null;
@@ -72,6 +80,7 @@ export type AppStatus = {
   pt: PtStatus[];
   tun: TunStatus;
   firewall: FirewallStatus;
+  network_lock: NetworkLockStatus;
   deps: DepStatus[];
   proxy: ProxyStatus;
   socks_host: string;
@@ -343,4 +352,61 @@ export type IssuedCredential = {
   client_name: string;
   credential: string;
   auth_private_line: string | null;
+};
+
+export type EgressFlow = {
+  process: string;
+  pid: number;
+  proto: string;
+  direction: string;
+  local: string;
+  remote: string;
+  class: string;
+  path: string;
+  location: string;
+  system: boolean;
+};
+
+export type ClearnetProcess = {
+  process: string;
+  pid: number;
+  killable: boolean;
+  path: string;
+  location: string;
+  system: boolean;
+};
+
+export type EgressWatch = {
+  watching: boolean;
+  sampled_at_unix: number;
+  supported: boolean;
+  detail: string;
+  through_oniongate: number;
+  tor_transport: number;
+  lan: number;
+  local: number;
+  listen: number;
+  bypass: number;
+  total: number;
+  truncated: boolean;
+  flows: EgressFlow[];
+  clearnet_processes: ClearnetProcess[];
+};
+
+export type KilledProcess = {
+  process: string;
+  pid: number;
+};
+
+export type ClearnetKillResult = {
+  killed: KilledProcess[];
+  skipped: KilledProcess[];
+  failed: KilledProcess[];
+  detail: string;
+};
+
+export type KillClearnetIdentityResult = {
+  kill: ClearnetKillResult;
+  identity: NewIdentityResult;
+  detail: string;
 };

@@ -41,6 +41,12 @@ report.
 OnionGate detects a small set of known applications on macOS and Linux. A
 switch applies or removes an app-specific change:
 
+- **Tor Browser via OnionGate** — installs a launcher that sets
+  `TOR_SKIP_LAUNCH` and points Tor Browser at OnionGate’s SOCKS/control on
+  `9150`/`9151` (same idea as Whonix). Open the launcher, not the stock Tor
+  Browser icon, and Connect OnionGate first. This preserves Tor Browser’s
+  fingerprinting defenses while using OnionGate’s Tor; it is not a second Tor
+  hop.
 - **Chrome / Chromium** — installs a separate “Chrome Tor” launcher with an
   explicit SOCKS argument. It does not rewrite the normal Chrome app.
 - **Firefox** — writes SOCKS and remote-DNS preferences into the selected

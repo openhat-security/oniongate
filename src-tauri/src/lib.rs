@@ -1,3 +1,4 @@
+mod apps_lifecycle;
 mod bypass;
 mod cleanup;
 pub mod cli;
@@ -5,6 +6,7 @@ mod commands;
 mod db;
 mod deps;
 mod detect;
+mod egress_watch;
 mod elevate;
 mod firewall;
 mod harden;
@@ -52,6 +54,8 @@ pub fn run() {
             }
             session_guard::start_monitor();
             workstation::start_monitor();
+            egress_watch::start_monitor();
+            ip::start_monitor();
             Ok(())
         })
         .manage(AppState::default())
@@ -69,6 +73,9 @@ pub fn run() {
             commands::clear_tor_logs,
             commands::start_tor,
             commands::stop_tor,
+            commands::arm_network_lock,
+            commands::disarm_network_lock,
+            commands::quit_user_applications,
             commands::get_recovery_status,
             commands::emergency_restore,
             commands::start_tun,
@@ -86,6 +93,8 @@ pub fn run() {
             commands::run_leak_verifier,
             commands::get_latest_leak_report,
             commands::export_latest_leak_report,
+            commands::get_egress_watch,
+            commands::reveal_egress_path,
             commands::start_onion_service,
             commands::list_onion_services,
             commands::stop_onion_service,
@@ -120,7 +129,9 @@ pub fn run() {
             commands::enable_proxy,
             commands::disable_proxy,
             commands::new_identity,
+            commands::kill_clearnet_and_new_identity,
             commands::refresh_ips,
+            commands::get_ips,
             commands::get_bypass_helpers,
             commands::write_shell_env,
             commands::get_shell_hook_status,

@@ -69,9 +69,27 @@ pub async fn teardown_session(
     saved_proxy: &Mutex<SavedProxyState>,
 ) -> Result<String, String> {
     let _ = crate::session::set_phase(crate::session::SessionPhase::Recovering, None);
-    crate::session_guard::release_all();
     let mut parts = Vec::new();
     let mut errors = Vec::new();
+
+    // 0) Lock clearnet BEFORE releasing Session Guard or dropping TUN — same
+    //    posture as a VPN that blocks traffic while reconnecting/disconnecting.
+    match firewall::arm_for_transition().await {
+        Ok(msg) => {
+            logs::append(&msg);
+            parts.push(msg);
+        }
+        Err(e) => {
+            logs::append(format!("Network lock before teardown failed: {e}"));
+            errors.push(format!(
+                "Could not lock the network before teardown ({e}); continuing carefully"
+            ));
+        }
+    }
+
+    // Suspended apps stay frozen until the lock is up, then we release them onto
+    // a blocked network rather than onto a live clearnet path.
+    crate::session_guard::release_all();
 
     // 1) TUN / sing-box (elevated stop if still running as root)
     {
@@ -174,6 +192,21 @@ pub async fn teardown_session(
         );
         logs::append(&linger);
         errors.push(linger);
+    }
+
+    // 9) Clear the transition lock last — only after Tor/TUN/proxy are gone so
+    //    nothing can race onto clearnet during teardown.
+    match firewall::disarm_after_transition().await {
+        Ok(msg) => {
+            logs::append(&msg);
+            parts.push(msg);
+        }
+        Err(e) => {
+            logs::append(format!("Network lock clear failed: {e}"));
+            errors.push(format!(
+                "Network lock may still be active (approve admin to clear): {e}"
+            ));
+        }
     }
 
     if errors.is_empty() {

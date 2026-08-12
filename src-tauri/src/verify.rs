@@ -49,6 +49,11 @@ fn remediation_for(id: &str) -> Option<String> {
             "Open the Connect screen and run Emergency Restore to reconcile firewall, TUN, and \
              proxy state with the crash-recovery journal."
         }
+        "egress_watch" => {
+            "Those processes have established TCP that is not OnionGate SOCKS, TUN, or OnionGate's \
+             Tor. In Proxy mode enable TUN or point the app at SOCKS. In TUN mode, quit the app or \
+             add it to selected-app routing. Destinations are not stored."
+        }
         _ => return None,
     };
     Some(text.into())
@@ -262,6 +267,43 @@ pub async fn run() -> LeakReport {
         !recovery.needed,
         "Live firewall/TUN/proxy state was compared with the crash-recovery journal",
     ));
+
+    let watch = crate::egress_watch::current();
+    let expected_direct = settings.connection_mode != "tun"
+        || (settings.split_tunnel && settings.app_routing_policy == "only");
+    checks.push(if !watch.watching {
+        warn(
+            "egress_watch",
+            "Live clearnet watch",
+            "The connection daemon is idle until you Connect",
+        )
+    } else if watch.bypass == 0 {
+        check(
+            "egress_watch",
+            "Live clearnet watch",
+            true,
+            "No established clearnet TCP outside OnionGate, Tor, or LAN",
+        )
+    } else if expected_direct {
+        warn(
+            "egress_watch",
+            "Live clearnet watch",
+            format!(
+                "{} established clearnet TCP flow(s) are not through OnionGate (counts only; destinations are not stored)",
+                watch.bypass
+            ),
+        )
+    } else {
+        check(
+            "egress_watch",
+            "Live clearnet watch",
+            false,
+            format!(
+                "{} established clearnet TCP flow(s) are not through OnionGate while TUN is capturing the default path",
+                watch.bypass
+            ),
+        )
+    });
 
     let passed = checks.iter().all(|item| item.status != "fail");
     let report = LeakReport {

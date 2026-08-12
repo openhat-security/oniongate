@@ -25,6 +25,7 @@ pub struct SessionJournal {
     pub proxy_changed: bool,
     pub tun_expected: bool,
     pub firewall_expected: bool,
+    pub network_lock_expected: bool,
     pub tor_expected: bool,
     pub active_transports: Vec<String>,
     pub last_error: Option<String>,
@@ -39,6 +40,7 @@ pub struct RecoveryStatus {
     pub proxy_live: bool,
     pub tun_live: bool,
     pub firewall_live: bool,
+    pub network_lock_live: bool,
     pub tor_live: bool,
     pub detail: String,
 }
@@ -112,6 +114,11 @@ pub fn expect_firewall(expected: bool) -> Result<(), String> {
     Ok(())
 }
 
+pub fn expect_network_lock(expected: bool) -> Result<(), String> {
+    update(|j| j.network_lock_expected = expected)?;
+    Ok(())
+}
+
 pub fn expect_transports(transports: Vec<String>) -> Result<(), String> {
     update(|j| j.active_transports = transports)?;
     Ok(())
@@ -134,13 +141,15 @@ pub fn recovery_status() -> RecoveryStatus {
     let proxy_live = crate::proxy::get_status().enabled;
     let tun_live = crate::tun::process_seems_running();
     let firewall_live = crate::firewall::status().active;
+    let network_lock_live = crate::firewall::network_lock_status().active;
     let tor_live = crate::tor::socks_reachable() || crate::tor::control_reachable();
     let journal_dirty = journal.phase != SessionPhase::Disconnected
         || journal.proxy_changed
         || journal.tun_expected
         || journal.firewall_expected
+        || journal.network_lock_expected
         || journal.tor_expected;
-    let live_dirty = proxy_live || tun_live || firewall_live || tor_live;
+    let live_dirty = proxy_live || tun_live || firewall_live || network_lock_live || tor_live;
     let interrupted =
         journal_dirty && journal.owner_pid != 0 && journal.owner_pid != std::process::id();
     let needed = interrupted && live_dirty;
@@ -150,6 +159,7 @@ pub fn recovery_status() -> RecoveryStatus {
         proxy_live,
         tun_live,
         firewall_live,
+        network_lock_live,
         tor_live,
         detail: if needed {
             "A previous protected session did not finish cleanup. Run Emergency Restore.".into()

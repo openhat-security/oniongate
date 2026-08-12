@@ -40,10 +40,17 @@ pub const PIPE_NAME: &str = r"\\.\pipe\oniongate-helper";
 pub enum HelperRequest {
     /// Liveness/authorization probe.
     Ping,
-    /// Apply the platform kill switch (block clearnet UDP/QUIC).
+    /// Apply the platform kill switch (block clearnet UDP/QUIC and IPv6).
     KillSwitchEnable,
     /// Remove the platform kill switch.
     KillSwitchDisable,
+    /// Apply the transition network lock (UDP/QUIC + IPv6; Windows also TCP).
+    /// `tor_path` is required on Windows so Tor can still reach guards; it must
+    /// be an absolute path whose final component is `tor` or `tor.exe`. Unix
+    /// backends ignore it (pf/nft cannot match Tor by executable path).
+    NetworkLockEnable { tor_path: String },
+    /// Remove the transition network lock.
+    NetworkLockDisable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,6 +108,10 @@ mod tests {
             HelperRequest::Ping,
             HelperRequest::KillSwitchEnable,
             HelperRequest::KillSwitchDisable,
+            HelperRequest::NetworkLockEnable {
+                tor_path: r"C:\OnionGate\tor.exe".into(),
+            },
+            HelperRequest::NetworkLockDisable,
         ] {
             let line = encode(&req).unwrap();
             assert!(line.ends_with(b"\n"));

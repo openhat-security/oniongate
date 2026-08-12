@@ -20,6 +20,7 @@ import { SystemPage } from "@/pages/SystemPage";
 import { AppSettingsPage } from "@/pages/AppSettingsPage";
 import { Flash } from "@/components/Flash";
 import { SetupWizard } from "@/components/SetupWizard";
+import { ClearnetAlert } from "@/components/ClearnetAlert";
 import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 import type { Tab } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -48,6 +49,25 @@ export default function App() {
   const [collapsed, setCollapsed] = useState<boolean>(() =>
     readSidebarCollapsed(),
   );
+  const [clearnetAlert, setClearnetAlert] = useState(false);
+  const [clearnetAlertDismissed, setClearnetAlertDismissed] = useState(false);
+
+  useEffect(() => {
+    if (!app.torOn) {
+      setClearnetAlert(false);
+      setClearnetAlertDismissed(false);
+      return;
+    }
+    if (app.status?.session_phase === "connecting") return;
+    const processes = app.egressWatch?.clearnet_processes ?? [];
+    if (clearnetAlert && processes.length === 0) {
+      setClearnetAlert(false);
+      return;
+    }
+    if (clearnetAlertDismissed || clearnetAlert) return;
+    if (!app.egressWatch?.watching || processes.length === 0) return;
+    setClearnetAlert(true);
+  }, [app.torOn, app.status?.session_phase, app.egressWatch, clearnetAlert, clearnetAlertDismissed]);
 
   useEffect(() => {
     let disposed = false;
@@ -209,6 +229,28 @@ export default function App() {
             error={app.error}
             onDismiss={app.clearFlash}
           />
+          {clearnetAlert ? (
+            <ClearnetAlert
+              processes={app.egressWatch?.clearnet_processes ?? []}
+              busy={app.busy}
+              showReview
+              onKill={() => {
+                setClearnetAlert(false);
+                setClearnetAlertDismissed(true);
+                app.killClearnetAndNewIdentity();
+              }}
+              onReview={() => {
+                setClearnetAlert(false);
+                setClearnetAlertDismissed(true);
+                app.setVerifyFlowFilter("clearnet");
+                app.setTab("verify");
+              }}
+              onDismiss={() => {
+                setClearnetAlert(false);
+                setClearnetAlertDismissed(true);
+              }}
+            />
+          ) : null}
           <div className="mx-auto min-h-full w-full max-w-4xl px-6 pb-5 pt-11 animate-[fade-in_280ms_ease-out]">
             {app.tab === "home" ? <ConnectPage app={app} /> : null}
             {app.tab === "apps" ? <AppsPage app={app} /> : null}

@@ -25,7 +25,8 @@ oniongate host --help
 oniongate status     # connection, bootstrap, and recovery state
 oniongate start      # start managed Tor using the saved direct/bridge strategy
 oniongate stop       # best-effort cleanup from journal + live process discovery
-oniongate newnym     # request a new Tor identity
+oniongate newnym                 # request a new Tor identity
+oniongate newnym --kill-clearnet # terminate clearnet processes, then NEWNYM
 oniongate bridges    # list configured bridge lines
 oniongate settings   # print settings as JSON
 ```
@@ -37,6 +38,12 @@ recovery fields; the phase alone is insufficient.
 `stop` starts in a new process with no GUI-owned child handles. It uses the
 recovery journal plus live process/port/firewall/proxy discovery, so inspect its
 output and run `status` afterward. A cleanup error means state may remain.
+
+`newnym --kill-clearnet` samples live sockets, terminates processes that currently
+have public Internet flows not through OnionGate (skipping OnionGate, Tor,
+editor/terminal, and core OS processes), then sends `NEWNYM`. It does not
+restart OnionGate. Only PIDs from that census are killed; the flag never takes
+a pid list.
 
 There is not yet a headless `emergency-restore` subcommand. If `status` reports
 `recovery_needed=true`, open the desktop app and run Emergency Restore, or stop
@@ -66,6 +73,8 @@ Status fields:
 | `recovery_needed` | A previous owner exited while OnionGate state remains live |
 | `permanent_sites` | Sites in the local permanent registry |
 | `temporary_sites` | Sites known to this process only |
+| `egress_watch_active` | Connection daemon (or a one-shot sample) is classifying sockets |
+| `egress_bypass` | Count of established public TCP flows not through OnionGate |
 | `bootstrap` / `bootstrap_error` | Control-port bootstrap result when available |
 
 ## Hosting

@@ -4,6 +4,44 @@ Connecting to Tor and *being protected* are different things. The Verify page
 checks the second one against the live state of your machine rather than against
 what OnionGate intended to configure.
 
+## Live connection census
+
+A background task samples TCP and UDP sockets (listening, inbound, and
+outbound) about every two seconds, including system processes the OS will
+expose. Each row shows the process name, whether it is a system binary, a
+link to its on-disk location (app bundle or executable), pid, protocol,
+direction, local address, the public source IP that path uses (Tor exit or
+WAN, from the last IP check), and full remote addresses. Classification:
+
+- **Through Tor** — OnionGate SOCKS/control/DNS or the TUN prefix;
+- **Tor process** — OnionGate's Tor, sing-box, or a pluggable transport;
+- **LAN** / **Local** — private, link-local, or loopback;
+- **Not through Tor** — public Internet that is not using OnionGate.
+
+The Connections tab is the live view. Addresses stay in process memory and are
+not written to logs, SQLite, or exported leak reports (those reports store a
+bypass *count* only).
+
+This is a socket census, not packet capture. Short-lived flows can be missed.
+Process names come from the executable path when the OS exposes it; click the
+path to reveal it in Finder (or the platform file manager). Binaries under
+system locations (`/System`, `/usr/libexec`, Windows System32, and similar)
+are labeled **System** and are not killed.
+
+## Kill leftover processes and get a new identity
+
+After OnionGate connects, if any process still has public Internet sockets that
+are not using OnionGate, the app asks whether to terminate those processes and
+then request a **new identity** (Tor `NEWNYM`). That is not a restart of
+OnionGate: circuits rotate after leftover clearnet sessions are dropped.
+
+The same action is on **Verify → Connections**. It is most useful on **Not
+through Tor**. OnionGate, its Tor/transport processes, your editor/terminal,
+and core OS processes are never killed. Destinations from this census are not
+logged; the result names only processes and pids in the UI.
+
+The CLI equivalent is `oniongate newnym --kill-clearnet`.
+
 ## What each check proves
 
 ### Tor egress
@@ -75,6 +113,13 @@ Compares the recovery journal with live Tor, proxy, TUN, and firewall state. It
 fails when an interrupted session still has OnionGate-managed state requiring
 Emergency Restore.
 
+### Live clearnet watch
+
+Uses the latest daemon sample. A pass means no established public TCP was
+observed outside OnionGate, Tor/transport, or LAN. In Proxy mode, leftover
+clearnet flows are a warning (apps may ignore SOCKS). In TUN mode with a
+default-via-Tor policy they fail. The saved report stores the count only.
+
 ## Pass, warning, and failure
 
 - **Pass** — the specific condition above was observed.
@@ -88,8 +133,9 @@ can pass while containing warnings. Read every row.
 ## Reading the report
 
 A report is a snapshot, not a guarantee. It says what was true at that moment,
-on this machine, for the applications it could observe. It cannot tell you
-whether an application you never registered is leaking, and it cannot detect
+on this machine, for the applications it could observe. The live watch lists
+processes that currently have clearnet TCP; it cannot tell you whether an
+application you never registered leaked a moment earlier, and it cannot detect
 correlation by an adversary watching both ends of your connection.
 
 Exported reports are redacted: public IPs, bridge lines, local file paths, and
