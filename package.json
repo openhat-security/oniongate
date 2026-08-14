@@ -1,7 +1,7 @@
 {
   "name": "oniongate",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "OnionGate — isolated Tor app routing, Onion Host, and leak verification",
   "license": "GPL-3.0-only",
   "homepage": "https://irruptio-security.github.io/oniongate/",

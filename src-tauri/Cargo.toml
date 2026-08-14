@@ -1,6 +1,6 @@
 [package]
 name = "tor-socks-gui"
-version = "0.2.2"
+version = "0.2.3"
 description = "OnionGate — Tor Workstation Toolkit with isolated routing and Onion Host"
 authors = ["adamsiwiec"]
 edition = "2021"

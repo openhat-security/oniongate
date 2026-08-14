@@ -525,7 +525,10 @@ jobs:
         run: |
           cargo install cargo-cyclonedx --locked
           cargo cyclonedx --manifest-path src-tauri/Cargo.toml --format json
-          npx --yes @cyclonedx/cyclonedx-npm --output-file npm.cdx.json
+          npx --yes @cyclonedx/cyclonedx-npm \
+            --package-lock-only \
+            --ignore-npm-errors \
+            --output-file npm.cdx.json
           node scripts/generate-sidecar-sbom.mjs sidecars.cdx.json
           cp src-tauri/*.cdx.json release-assets/
           cp npm.cdx.json sidecars.cdx.json release-assets/

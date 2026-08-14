@@ -7,6 +7,25 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-08-14
+
+### Fixed
+
+- npm CycloneDX SBOM generation reads the lockfile and ignores `npm ls` peer
+  noise, so the Actions metadata job can publish checksums and updater
+  metadata.
+
+### Changed
+
+- GitHub Actions publishes the four-platform installers (macOS Apple Silicon,
+  macOS Intel, Linux x86_64, Windows x86_64). 0.2.2 built them but did not
+  publish after the SBOM step failed.
+
+### Known limitations
+
+- This remains a 0.x alpha. Apple notarization and Authenticode are still
+  optional. Do not treat it as a sole control for high-risk work.
+
 ## [0.2.2] - 2026-08-13
 
 ### Changed

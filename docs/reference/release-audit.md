@@ -14,8 +14,8 @@ not a substitute for the user-facing [changelog](/reference/changelog).
 Do not paste bridge lines, onion keys, credentials, public IPs, or full
 command lines into commit subjects.
 
-## 0.2.2
+## 0.2.3
 
-Range: `v0.2.1..HEAD`.
+Range: `v0.2.2..HEAD`.
 
-- `e931b8d Prepare 0.2.2: rustfmt so Actions can ship the four-platform release.`
+- (no commits in this range)
