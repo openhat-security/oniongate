@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, RefreshCw, UserRound } from "lucide-react";
+import { Loader2, UserRound } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { OnionIcon } from "@/OnionIcon";
 import { Badge } from "@/components/ui/badge";
@@ -64,10 +64,9 @@ export function HomePage({
     torOn,
     proxyOn,
     protectionLabel,
-    toggleTor,
-    toggleProxy,
+    connectTor,
+    disconnectTor,
     newIdentity,
-    refreshIps,
     saveSettings,
     run,
     refreshSettings,
@@ -75,6 +74,14 @@ export function HomePage({
 
   const [vpn, setVpn] = useState<VpnStatus | null>(null);
   const [recovery, setRecovery] = useState<RecoveryStatus | null>(null);
+  const [connectGate, setConnectGate] = useState<null | "ask" | "opsec">(null);
+  const [opsecAck, setOpsecAck] = useState(false);
+
+  const cancelConnectGate = () => {
+    setConnectGate(null);
+    setOpsecAck(false);
+    void invoke<string>("disarm_network_lock").catch(() => {});
+  };
 
   useEffect(() => {
     void invoke<VpnStatus>("detect_vpn")
@@ -97,6 +104,18 @@ export function HomePage({
   const t = (key: Parameters<typeof translate>[1]) => translate(locale, key);
 
   const mode = settings?.connection_mode === "tun" ? "tun" : "proxy";
+  const ipPath =
+    !torOn
+      ? "Direct"
+      : mode === "tun" && status?.tun.running
+        ? "TUN"
+        : proxyOn
+          ? "System proxy"
+          : "SOCKS";
+  const ipPlace =
+    ips?.tor_location?.label ??
+    ips?.direct_location?.label ??
+    null;
   const bridgesOn = settings?.bridges_enabled ?? false;
   const bridgeCount = settings?.bridge_lines?.length ?? 0;
   const bridgeSummary = bridgesOn
@@ -154,8 +173,18 @@ export function HomePage({
             />
             <button
               type="button"
-              disabled={busy || !status?.tor_installed}
-              onClick={toggleTor}
+              disabled={busy || !status || !status.tor_installed}
+              onClick={() => {
+                if (torOn) {
+                  disconnectTor();
+                  return;
+                }
+                setOpsecAck(false);
+                setConnectGate("ask");
+                void invoke<string>("arm_network_lock").catch(() => {
+                  /* start_tor arms again and fails closed if lock is required */
+                });
+              }}
               aria-label={torOn ? t("disconnectAction") : t("connectAction")}
               className={cn(
                 "relative z-10 flex h-40 w-40 items-center justify-center rounded-full border-2 transition-all",
@@ -167,7 +196,7 @@ export function HomePage({
                   !busy &&
                   "cursor-pointer hover:scale-[1.02] active:scale-[0.98]",
                 busy && "animate-pulse",
-                (!status?.tor_installed || busy) && "opacity-60",
+                (!status || !status.tor_installed || busy) && "opacity-60",
               )}
             >
               {busy ? (
@@ -203,13 +232,15 @@ export function HomePage({
               torOn ? "text-accent-strong" : "text-muted",
             )}
           >
-            {!status?.tor_installed
-              ? (status?.install_hint ?? "Tor runtime missing")
-              : busy
-                ? t("working")
-                : torOn
-                  ? t("disconnectHint")
-                  : t("connectHint")}
+            {!status
+              ? t("working")
+              : !status.tor_installed
+                ? (status.install_hint || "Tor runtime missing")
+                : busy
+                  ? t("working")
+                  : torOn
+                    ? t("disconnectHint")
+                    : t("connectHint")}
           </p>
           {status?.bootstrap_progress != null && torOn ? (
             <p className="mt-1 text-xs text-muted">
@@ -220,53 +251,30 @@ export function HomePage({
 
         <div className="flex flex-col gap-3">
           <div className="rounded-xl border border-line bg-panel px-4 py-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-              Current IP
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                  Current IP
+                </div>
+                <div className="mt-1 truncate font-mono text-sm">
+                  {ips?.tor_ip ?? ips?.direct_ip ?? "…"}
+                </div>
+                <div className="mt-0.5 truncate text-[11px] text-muted">
+                  {[ipPlace, ipPath].filter(Boolean).join(" · ")}
+                </div>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="shrink-0"
+                disabled={busy || !torOn}
+                title="Rotate Tor circuits (NEWNYM)"
+                onClick={newIdentity}
+              >
+                <UserRound className="h-3.5 w-3.5" />
+                New identity
+              </Button>
             </div>
-            <div className="mt-1 truncate font-mono text-sm">
-              {ips?.tor_ip ?? ips?.direct_ip ?? "…"}
-            </div>
-            <div className="mt-0.5 truncate text-[11px] text-muted">
-              {ips?.tor_location?.label ??
-                ips?.direct_location?.label ??
-                (torOn ? "Via Tor" : "Direct")}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="secondary"
-              disabled={busy}
-              onClick={() =>
-                run(async () => {
-                  await refreshIps();
-                  return "IPs refreshed";
-                })
-              }
-            >
-              <RefreshCw className="h-4 w-4" />
-              Refresh IP
-            </Button>
-            <Button
-              variant="secondary"
-              disabled={busy || !torOn}
-              onClick={newIdentity}
-            >
-              <UserRound className="h-4 w-4" />
-              New identity
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={
-                busy ||
-                !torOn ||
-                !status?.proxy.supported ||
-                status?.connection_mode === "tun"
-              }
-              onClick={toggleProxy}
-            >
-              System proxy: {proxyOn ? "ON" : "OFF"}
-            </Button>
           </div>
 
           <div className="rounded-xl border border-line bg-panel p-3">
@@ -426,6 +434,126 @@ export function HomePage({
           value={formatUptime(session?.uptime_secs ?? 0)}
         />
       </div>
+
+      {connectGate ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="connect-gate-title"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-line bg-panel p-5 shadow-xl">
+            {connectGate === "ask" ? (
+              <>
+                <h2
+                  id="connect-gate-title"
+                  className="text-base font-semibold tracking-tight"
+                >
+                  Close applications before connecting?
+                </h2>
+                <p className="mt-2 text-sm text-muted">
+                  While OnionGate connects or reconnects, clearnet UDP and IPv6
+                  are locked so traffic cannot leak onto the open network. Apps
+                  that stay open can still keep identity-linked sessions alive
+                  during that window.
+                </p>
+                <p className="mt-2 text-sm text-muted">
+                  Closing foreground apps is the safest option. OnionGate,
+                  Finder, and your terminal/editor are left alone.
+                </p>
+                <div className="mt-4 flex flex-col gap-2">
+                  <Button
+                    disabled={busy}
+                    onClick={() =>
+                      void run(
+                        async () => {
+                          const quit = await invoke<{ detail: string }>(
+                            "quit_user_applications",
+                          );
+                          setConnectGate(null);
+                          const started = await invoke<string>("start_tor");
+                          return `${quit.detail}. ${started}`;
+                        },
+                      )
+                    }
+                  >
+                    Close apps and connect
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => {
+                      setOpsecAck(false);
+                      setConnectGate("opsec");
+                    }}
+                  >
+                    Keep apps open
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={cancelConnectGate}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2
+                  id="connect-gate-title"
+                  className="text-base font-semibold tracking-tight"
+                >
+                  Confirm your OPSEC check
+                </h2>
+                <p className="mt-2 text-sm text-muted">
+                  You chose to leave applications running. Before connecting,
+                  double-check that nothing linked to your identity is online —
+                  browsers signed into accounts, chat clients, email, cloud
+                  sync, or anything that could tie this session to you.
+                </p>
+                <label className="mt-4 flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={opsecAck}
+                    onChange={(e) => setOpsecAck(e.target.checked)}
+                  />
+                  <span>
+                    I have checked that nothing associated with my identity is
+                    currently running.
+                  </span>
+                </label>
+                <div className="mt-4 flex flex-col gap-2">
+                  <Button
+                    disabled={busy || !opsecAck}
+                    onClick={() => {
+                      setConnectGate(null);
+                      connectTor();
+                    }}
+                  >
+                    Connect anyway
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => setConnectGate("ask")}
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={cancelConnectGate}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

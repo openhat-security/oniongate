@@ -47,6 +47,21 @@ control, update all affected guide and reference pages—not only the README.
 Claims about verification must state what is observed and what remains
 unproven.
 
+## Changelog
+
+Every user-visible change needs a Keep a Changelog bullet under
+`## [Unreleased]` in `CHANGELOG.md` in the same PR. `make check` and CI run
+`make changelog-check`. That fails if behavior files changed with an empty
+Unreleased section, or if [docs/reference/changelog.md](docs/reference/changelog.md)
+is stale.
+
+Before a release, move Unreleased into a dated `## [x.y.z] - YYYY-MM-DD`
+section and run `make changelog-sync` so the docs site and
+[release audit trail](docs/reference/release-audit.md) (commit subjects since
+the previous tag) match. GitHub release notes are extracted from that dated
+section. Do not put secrets, bridge lines, keys, or public IPs in changelog
+text or commit subjects.
+
 ## Pull requests
 
 - Keep network mutations behind a typed platform API.

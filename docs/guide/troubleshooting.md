@@ -27,8 +27,8 @@ kill-switch rule, restores the previous proxy snapshot, stops transports and
 temporary onion sites, and stops managed Tor.
 
 Emergency Restore is currently a desktop command. The CLI exposes
-`recovery_needed` in `status` and a best-effort `stop`, but no equivalent
-headless restore subcommand yet.
+`recovery_needed` in `status` and a best-effort `stop`. `make cleanup` runs
+that same restore after a killed `make dev` session.
 
 If cleanup reports leftovers, do not assume the machine is back to normal.
 Approve the administrator prompt and retry. Check the live firewall, proxy, and

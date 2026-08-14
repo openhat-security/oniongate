@@ -87,6 +87,8 @@ fn detect_macos() -> Vec<DetectedApp> {
     let status = bypass::advanced_status();
     let by_id = |id: &str| status.items.iter().find(|i| i.id == id);
 
+    let tor_browser_installed = PathBuf::from("/Applications/Tor Browser.app").is_dir()
+        || home().join("Applications/Tor Browser.app").is_dir();
     let chrome_installed = PathBuf::from("/Applications/Google Chrome.app").is_dir()
         || PathBuf::from("/Applications/Chromium.app").is_dir();
     let firefox_installed = PathBuf::from("/Applications/Firefox.app").is_dir()
@@ -139,6 +141,14 @@ fn detect_macos() -> Vec<DetectedApp> {
     };
 
     [
+        map(
+            "tor_browser",
+            "Tor Browser via OnionGate",
+            "browsers",
+            tor_browser_installed,
+            &["firefox", "Tor Browser"],
+            "Use the OnionGate launcher so Tor Browser skips its own Tor.",
+        ),
         map(
             "chrome",
             "Google Chrome",
@@ -223,6 +233,14 @@ fn detect_linux() -> Vec<DetectedApp> {
         })
     };
 
+    let tor_browser_installed = home()
+        .join("tor-browser/Browser/start-tor-browser")
+        .is_file()
+        || home()
+            .join("tor-browser_en-US/Browser/start-tor-browser")
+            .is_file()
+        || bin_ok(&["torbrowser", "tor-browser"])
+        || desktop_ok(&["torbrowser", "tor-browser", "start-tor-browser"]);
     let chrome_installed = bin_ok(&[
         "google-chrome",
         "google-chrome-stable",
@@ -277,6 +295,14 @@ fn detect_linux() -> Vec<DetectedApp> {
     };
 
     [
+        map(
+            "tor_browser",
+            "Tor Browser via OnionGate",
+            "browsers",
+            tor_browser_installed,
+            &["firefox", "tor-browser"],
+            "Use the OnionGate launcher so Tor Browser skips its own Tor.",
+        ),
         map(
             "chrome",
             "Chrome / Chromium",

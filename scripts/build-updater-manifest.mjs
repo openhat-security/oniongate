@@ -12,11 +12,25 @@ import { join } from "node:path";
 
 // Tauri looks up `${os}-${arch}`. The payload for each is whichever bundle
 // format that platform's updater installs.
+//
+// The bundler's own arch spelling differs from the Rust target triple's, and
+// differs again between formats: Intel macOS ships as `_x64.app.tar.gz` while
+// the Linux AppImage uses Debian's `amd64`. Accept every spelling seen for a
+// target rather than assuming the triple's.
+const endsWithAny = (...suffixes) => (name) =>
+  suffixes.some((suffix) => name.endsWith(suffix));
+
 const TARGETS = [
-  { key: "darwin-aarch64", matches: (name) => name.endsWith("_aarch64.app.tar.gz") },
-  { key: "darwin-x86_64", matches: (name) => name.endsWith("_x86_64.app.tar.gz") },
-  { key: "linux-x86_64", matches: (name) => name.endsWith(".AppImage") },
-  { key: "windows-x86_64", matches: (name) => name.endsWith("-setup.exe") },
+  {
+    key: "darwin-aarch64",
+    matches: endsWithAny("_aarch64.app.tar.gz", "_arm64.app.tar.gz"),
+  },
+  {
+    key: "darwin-x86_64",
+    matches: endsWithAny("_x64.app.tar.gz", "_x86_64.app.tar.gz"),
+  },
+  { key: "linux-x86_64", matches: endsWithAny(".AppImage") },
+  { key: "windows-x86_64", matches: endsWithAny("-setup.exe") },
 ];
 
 const [assetDir, version, baseUrl, output] = process.argv.slice(2);

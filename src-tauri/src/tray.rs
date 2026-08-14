@@ -49,9 +49,14 @@ fn status_label() -> String {
     }
 
     let settings = crate::settings::load();
+    let firewall = crate::firewall::status();
+    if settings.strict_tcp_lock
+        && (!firewall.strict_deny_live || !settings.strict_tcp_exceptions.is_empty())
+    {
+        return "Degraded".into();
+    }
     let dns_ready = !settings.remote_dns || crate::tor::dns_reachable();
     let firewall_ready = if settings.kill_switch {
-        let firewall = crate::firewall::status();
         firewall.active && firewall.verified_live
     } else {
         true

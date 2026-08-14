@@ -33,12 +33,16 @@ pub fn log_path() -> Result<PathBuf, String> {
     Ok(app_dir()?.join("sing-box.log"))
 }
 
+/// sing-box 1.12 replaced the `address: "udp://host:port"` server form with typed
+/// servers, and 1.13 refuses to start on the old one rather than warning.
 fn dns_server(remote_dns: bool) -> (serde_json::Value, &'static str) {
     if remote_dns {
         (
             serde_json::json!({
+                "type": "udp",
                 "tag": "tor-dns",
-                "address": format!("udp://{SOCKS_HOST}:{DNS_PORT}"),
+                "server": SOCKS_HOST,
+                "server_port": DNS_PORT,
                 "detour": "direct"
             }),
             "tor-dns",
@@ -46,9 +50,8 @@ fn dns_server(remote_dns: bool) -> (serde_json::Value, &'static str) {
     } else {
         (
             serde_json::json!({
-                "tag": "system-dns",
-                "address": "local",
-                "detour": "direct"
+                "type": "local",
+                "tag": "system-dns"
             }),
             "system-dns",
         )
@@ -74,8 +77,27 @@ fn build_config(settings: &AppSettings, log_output: &str) -> serde_json::Value {
         serde_json::json!({ "protocol": "quic", "outbound": "block" }),
         serde_json::json!({ "network": "udp", "port": 443, "outbound": "block" }),
         serde_json::json!({ "network": "udp", "outbound": "block" }),
-        serde_json::json!({ "ip_is_private": true, "outbound": "direct" }),
     ];
+
+    // Tor's own connection to a guard is a public destination, so without this it
+    // falls through to `tor-socks` and is handed back to Tor, which dials the same
+    // guard again. Sits after the UDP blocks so Tor gains no UDP path, and matches
+    // on path so an unrelated binary named `tor` cannot claim the exemption.
+    if let Some(tor) = crate::tor::find_tor_binary() {
+        rules.push(serde_json::json!({
+            "process_path": [tor.display().to_string()],
+            "outbound": "direct"
+        }));
+    }
+
+    if !settings.strict_tcp_lock {
+        rules.push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
+    }
+
+    // Applications get no IPv6 path. This has to come after the private-address
+    // rule so link-local and ULA still reach the LAN, and after the Tor exemption
+    // so Tor can still reach guards over IPv6 on an IPv6-only network.
+    rules.push(serde_json::json!({ "ip_version": 6, "outbound": "block" }));
 
     let mut outbounds = vec![
         serde_json::json!({
@@ -118,7 +140,7 @@ fn build_config(settings: &AppSettings, log_output: &str) -> serde_json::Value {
             }
             rules.insert(0, rule);
         }
-        if settings.app_routing_policy == "only" {
+        if settings.app_routing_policy == "only" && !settings.strict_tcp_lock {
             "direct"
         } else {
             "tor-socks"
@@ -126,6 +148,10 @@ fn build_config(settings: &AppSettings, log_output: &str) -> serde_json::Value {
     } else {
         "tor-socks"
     };
+
+    // Inbound `sniff` was removed in sing-box 1.13 in favour of a rule action, and
+    // it has to stay ahead of everything so later rules can match sniffed traffic.
+    rules.insert(0, serde_json::json!({ "action": "sniff" }));
 
     serde_json::json!({
         "log": {
@@ -136,18 +162,22 @@ fn build_config(settings: &AppSettings, log_output: &str) -> serde_json::Value {
         "dns": {
             "servers": [dns_server],
             "final": dns_tag,
-            "strategy": "prefer_ipv4"
+            // IPv6 egress is blocked, so handing applications AAAA records would
+            // only produce connections that are refused. Never resolve them.
+            "strategy": "ipv4_only"
         },
         "inbounds": [{
             "type": "tun",
             "tag": "tun-in",
             "interface_name": "torsocks0",
-            "address": ["172.19.0.1/30"],
+            // The IPv6 prefix exists so sing-box installs IPv6 routes and the
+            // block rule above can reject that traffic. Without it, sing-box
+            // installs no IPv6 route and IPv6 leaves via the physical interface.
+            "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
             "mtu": 1500,
             "auto_route": true,
             "strict_route": true,
-            "stack": "system",
-            "sniff": true
+            "stack": "system"
         }],
         "outbounds": outbounds,
         "route": {
@@ -541,14 +571,158 @@ mod tests {
     fn tor_dns_uses_the_udp_dnsport() {
         let (server, tag) = dns_server(true);
         assert_eq!(tag, "tor-dns");
-        assert_eq!(server["address"], "udp://127.0.0.1:9053");
+        assert_eq!(server["type"], "udp");
+        assert_eq!(server["server"], SOCKS_HOST);
+        assert_eq!(server["server_port"], DNS_PORT);
     }
 
     #[test]
     fn disabled_remote_dns_uses_system_resolver() {
         let (server, tag) = dns_server(false);
         assert_eq!(tag, "system-dns");
-        assert_eq!(server["address"], "local");
+        assert_eq!(server["type"], "local");
+    }
+
+    /// The legacy `address` form makes sing-box 1.13 exit fatally at startup.
+    #[test]
+    fn dns_servers_never_use_the_removed_address_form() {
+        for remote in [true, false] {
+            let (server, _) = dns_server(remote);
+            assert!(
+                server.get("address").is_none(),
+                "legacy DNS address form is rejected by sing-box: {server}"
+            );
+        }
+    }
+
+    #[test]
+    fn applications_get_no_ipv6_path() {
+        let config = build_config(&AppSettings::default(), "/tmp/sing-box.log");
+        let ipv6 = rules(&config)
+            .iter()
+            .position(|r| r["ip_version"] == 6 && r["outbound"] == "block")
+            .expect("IPv6 must be blocked");
+        let private = rules(&config)
+            .iter()
+            .position(|r| r["ip_is_private"] == true)
+            .expect("private addresses must stay direct");
+
+        // Ordering carries the meaning: LAN-local IPv6 has to be matched before
+        // the block, otherwise link-local traffic dies with it.
+        assert!(private < ipv6, "private rule must precede the IPv6 block");
+
+        // Capturing IPv6 is what makes the block reachable at all.
+        let addresses = config["inbounds"][0]["address"].as_array().unwrap();
+        assert!(
+            addresses.iter().any(|a| a.as_str().unwrap().contains(':')),
+            "TUN needs an IPv6 prefix or IPv6 never enters the tunnel: {addresses:?}"
+        );
+        assert_eq!(config["dns"]["strategy"], "ipv4_only");
+    }
+
+    #[test]
+    fn nic_lock_does_not_send_private_or_unmatched_direct() {
+        let mut settings = AppSettings::default();
+        settings.strict_tcp_lock = true;
+        settings.split_tunnel = true;
+        settings.app_routing_policy = "only".into();
+        settings.route_apps = vec![crate::settings::AppIdentity {
+            id: "app".into(),
+            process_name: "Chrome".into(),
+            ..crate::settings::AppIdentity::default()
+        }];
+        let config = build_config(&settings, "/tmp/sing-box.log");
+        assert!(
+            rules(&config).iter().all(|r| r["ip_is_private"] != true),
+            "private-direct must be off while the NIC lock is on"
+        );
+        assert_eq!(config["route"]["final"], "tor-socks");
+    }
+
+    /// Routing Tor's own guard connections back into the tunnel hands them to
+    /// Tor, which dials the same guard again.
+    #[test]
+    fn tor_traffic_is_exempt_from_the_tunnel() {
+        let Some(tor) = crate::tor::find_tor_binary() else {
+            return;
+        };
+        let config = build_config(&AppSettings::default(), "/tmp/sing-box.log");
+        let all = rules(&config);
+        let exemption = all
+            .iter()
+            .position(|r| {
+                r["process_path"]
+                    .as_array()
+                    .is_some_and(|p| p.iter().any(|v| v == &tor.display().to_string()))
+                    && r["outbound"] == "direct"
+            })
+            .expect("Tor must be exempt from the tunnel");
+        let ipv6 = all
+            .iter()
+            .position(|r| r["ip_version"] == 6)
+            .expect("IPv6 must be blocked");
+        let udp = all
+            .iter()
+            .position(|r| r["network"] == "udp" && r.get("port").is_none())
+            .expect("UDP must be blocked");
+
+        // Before the IPv6 block so Tor still works on IPv6-only networks, after
+        // the UDP block so the exemption grants Tor no UDP path.
+        assert!(udp < exemption, "Tor must not gain a UDP path");
+        assert!(exemption < ipv6, "Tor must still reach guards over IPv6");
+    }
+
+    /// Config schema drift is silent until sing-box refuses to start, which is a
+    /// broken TUN mode rather than a failing build. Ask the shipped binary
+    /// directly instead of asserting against a schema we remember.
+    #[test]
+    fn shipped_singbox_accepts_every_generated_config() {
+        let Some(singbox) = deps::find_singbox() else {
+            return;
+        };
+
+        let variants: [(&str, AppSettings); 3] = [
+            ("default", AppSettings::default()),
+            (
+                "system dns",
+                AppSettings {
+                    remote_dns: false,
+                    ..AppSettings::default()
+                },
+            ),
+            (
+                "split tunnel",
+                AppSettings {
+                    split_tunnel: true,
+                    app_routing_policy: "only".into(),
+                    route_apps: vec![app("a", "signal", 7)],
+                    ..AppSettings::default()
+                },
+            ),
+        ];
+
+        for (label, settings) in variants {
+            let config = build_config(&settings, "/tmp/sing-box-test.log");
+            let path = std::env::temp_dir().join(format!(
+                "oniongate-singbox-check-{}.json",
+                label.replace(' ', "-")
+            ));
+            fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+
+            let output = std::process::Command::new(&singbox)
+                .arg("check")
+                .arg("-c")
+                .arg(&path)
+                .output()
+                .expect("run sing-box check");
+            let _ = fs::remove_file(&path);
+
+            assert!(
+                output.status.success(),
+                "sing-box rejected the {label} config:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 
     use crate::settings::AppIdentity;

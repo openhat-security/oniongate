@@ -5,7 +5,9 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
-use crate::tor::{SOCKS_HOST, SOCKS_PORT};
+use crate::tor::{
+    control_cookie_path, BROWSER_CONTROL_PORT, BROWSER_SOCKS_PORT, SOCKS_HOST, SOCKS_PORT,
+};
 
 const HOOK_MARKER_BEGIN: &str = "# >>> tor-socks-gui >>>";
 const HOOK_MARKER_END: &str = "# <<< tor-socks-gui <<<";
@@ -113,6 +115,7 @@ pub fn advanced_status() -> AdvancedStatus {
         .map(|p| firefox_profile_configured(p))
         .unwrap_or(false);
 
+    let tor_browser = tor_browser_launcher_status();
     let chrome = chrome_app_status();
     let cursor = ide_proxy_status("Cursor");
     let vscode = ide_proxy_status("Code");
@@ -121,6 +124,26 @@ pub fn advanced_status() -> AdvancedStatus {
     let slack = electron_app_status("Slack Tor");
 
     let items = vec![
+        AdvancedItem {
+            id: "tor_browser".into(),
+            group: "browsers".into(),
+            title: "Tor Browser via OnionGate".into(),
+            description:
+                "Installs a launcher that skips Tor Browser's own Tor and uses OnionGate's."
+                    .into(),
+            configured: tor_browser.installed,
+            detail: tor_browser.detail,
+            configure_label: if tor_browser.installed {
+                "Reinstall".into()
+            } else {
+                "Install launcher".into()
+            },
+            can_remove: tor_browser.installed,
+            note: Some(
+                "Stock Tor Browser starts its own Tor on 9150. Under OnionGate TUN that stacks Tor-over-Tor and breaks the connection check. This launcher sets TOR_SKIP_LAUNCH and points SOCKS/control at OnionGate (9150/9151), so about:tor treats Tor as externally managed. Open the launcher, not the normal Tor Browser icon. OnionGate must be Connected first."
+                    .into(),
+            ),
+        },
         AdvancedItem {
             id: "chrome".into(),
             group: "browsers".into(),
@@ -1787,6 +1810,7 @@ pub fn set_shell_proxy_mode(mode: &str) -> Result<String, String> {
 
 pub fn configure_item(id: &str) -> Result<String, String> {
     match id {
+        "tor_browser" => write_tor_browser_launcher(),
         "firefox" => write_firefox_user_js(),
         "chrome" => write_chrome_launcher(),
         "cursor" => configure_cursor(),
@@ -1800,6 +1824,7 @@ pub fn configure_item(id: &str) -> Result<String, String> {
 
 pub fn remove_item(id: &str) -> Result<String, String> {
     match id {
+        "tor_browser" => remove_tor_browser_launcher(),
         "firefox" => remove_firefox_config(),
         "chrome" => remove_chrome_launcher(),
         "cursor" => remove_cursor(),
@@ -1809,4 +1834,333 @@ pub fn remove_item(id: &str) -> Result<String, String> {
         "slack" => remove_slack(),
         _ => Err(format!("Cannot remove advanced item: {id}")),
     }
+}
+
+struct TorBrowserLauncherStatus {
+    installed: bool,
+    detail: String,
+}
+
+fn tor_browser_launcher_status() -> TorBrowserLauncherStatus {
+    #[cfg(target_os = "macos")]
+    {
+        let app = macos_tor_browser_launcher_path();
+        if app.is_dir() {
+            return TorBrowserLauncherStatus {
+                installed: true,
+                detail: format!("Launcher at {}", app.display()),
+            };
+        }
+        let found = find_tor_browser_app()
+            .map(|p| format!("Tor Browser found at {}", p.display()))
+            .unwrap_or_else(|| "Tor Browser.app not found yet".into());
+        return TorBrowserLauncherStatus {
+            installed: false,
+            detail: format!("Not installed in ~/Applications ({found})"),
+        };
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let desktop = linux_tor_browser_launcher_desktop_path();
+        if desktop.is_file() {
+            return TorBrowserLauncherStatus {
+                installed: true,
+                detail: format!("App menu entry at {}", desktop.display()),
+            };
+        }
+        let found = find_linux_tor_browser_start()
+            .map(|p| format!("start-tor-browser at {}", p.display()))
+            .unwrap_or_else(|| "Tor Browser not found yet".into());
+        return TorBrowserLauncherStatus {
+            installed: false,
+            detail: format!("Not installed ({found})"),
+        };
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        TorBrowserLauncherStatus {
+            installed: false,
+            detail: "Unsupported platform".into(),
+        }
+    }
+}
+
+fn tor_browser_env_exports(cookie: &Path) -> String {
+    format!(
+        "export TOR_SKIP_LAUNCH=1\n\
+export TOR_SOCKS_HOST=\"{SOCKS_HOST}\"\n\
+export TOR_SOCKS_PORT=\"{BROWSER_SOCKS_PORT}\"\n\
+export TOR_CONTROL_HOST=\"{SOCKS_HOST}\"\n\
+export TOR_CONTROL_PORT=\"{BROWSER_CONTROL_PORT}\"\n\
+export TOR_CONTROL_COOKIE_AUTH_FILE=\"{}\"\n\
+export TOR_NO_DISPLAY_NETWORK_SETTINGS=1\n",
+        cookie.display()
+    )
+}
+
+pub fn write_tor_browser_launcher() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        return install_macos_tor_browser_launcher();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return install_linux_tor_browser_launcher();
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        Err("Tor Browser launcher is not supported on this platform".into())
+    }
+}
+
+pub fn remove_tor_browser_launcher() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        return remove_macos_tor_browser_launcher();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return remove_linux_tor_browser_launcher();
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        Err("Tor Browser launcher remove is not supported on this platform".into())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_tor_browser_launcher_path() -> PathBuf {
+    home_dir()
+        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+        .join("Applications")
+        .join("Tor Browser via OnionGate.app")
+}
+
+#[cfg(target_os = "macos")]
+fn find_tor_browser_app() -> Option<PathBuf> {
+    let home = home_dir().ok()?;
+    for candidate in [
+        PathBuf::from("/Applications/Tor Browser.app"),
+        home.join("Applications/Tor Browser.app"),
+    ] {
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn tor_browser_macos_binary(app: &Path) -> Result<PathBuf, String> {
+    for name in ["firefox", "Tor Browser"] {
+        let bin = app.join("Contents/MacOS").join(name);
+        if bin.is_file() {
+            return Ok(bin);
+        }
+    }
+    Err(format!(
+        "Could not find Tor Browser binary inside {}",
+        app.display()
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn install_macos_tor_browser_launcher() -> Result<String, String> {
+    let tb_app = find_tor_browser_app().ok_or_else(|| {
+        "Tor Browser.app not found in /Applications or ~/Applications. Install Tor Browser first."
+            .to_string()
+    })?;
+    let tb_bin = tor_browser_macos_binary(&tb_app)?;
+    let cookie = control_cookie_path()?;
+
+    let app = macos_tor_browser_launcher_path();
+    let contents = app.join("Contents");
+    let macos = contents.join("MacOS");
+    let resources = contents.join("Resources");
+    fs::create_dir_all(&macos).map_err(|e| format!("Failed to create app bundle: {e}"))?;
+    fs::create_dir_all(&resources).map_err(|e| format!("Failed to create Resources: {e}"))?;
+
+    let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>Tor Browser via OnionGate</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.openhat.oniongate.tor-browser</string>
+  <key>CFBundleName</key>
+  <string>Tor Browser via OnionGate</string>
+  <key>CFBundleDisplayName</key>
+  <string>Tor Browser via OnionGate</string>
+  <key>CFBundleIconFile</key>
+  <string>app</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>
+"#;
+    fs::write(contents.join("Info.plist"), plist)
+        .map_err(|e| format!("Failed to write Info.plist: {e}"))?;
+
+    let env = tor_browser_env_exports(&cookie);
+    let exe = macos.join("Tor Browser via OnionGate");
+    let script = format!(
+        "#!/bin/zsh\n\
+# Generated by OnionGate — skip TB's Tor, use OnionGate's SOCKS/control.\n\
+# Do not open stock Tor Browser while OnionGate is Connected (9150/9151 are occupied).\n\
+{env}\
+if ! nc -z -w 1 \"{SOCKS_HOST}\" \"{BROWSER_SOCKS_PORT}\" >/dev/null 2>&1; then\n\
+  osascript -e 'display alert \"OnionGate is not Connected\" message \"Connect OnionGate first, then open this launcher. Tor Browser will use OnionGate Tor on port {BROWSER_SOCKS_PORT}.\" as critical' >/dev/null 2>&1 || true\n\
+  exit 1\n\
+fi\n\
+if [ ! -f \"$TOR_CONTROL_COOKIE_AUTH_FILE\" ]; then\n\
+  osascript -e 'display alert \"OnionGate Tor cookie missing\" message \"Connect OnionGate so managed Tor writes its control cookie, then retry.\" as critical' >/dev/null 2>&1 || true\n\
+  exit 1\n\
+fi\n\
+exec \"{}\" \"$@\"\n",
+        tb_bin.display()
+    );
+    fs::write(&exe, script).map_err(|e| format!("Failed to write launcher: {e}"))?;
+    chmod_exec(&exe)?;
+
+    let icns_src = tb_app.join("Contents/Resources/firefox.icns");
+    let icns_alt = tb_app.join("Contents/Resources/app.icns");
+    let icns_dst = resources.join("app.icns");
+    if icns_src.is_file() {
+        let _ = fs::copy(&icns_src, &icns_dst);
+    } else if icns_alt.is_file() {
+        let _ = fs::copy(&icns_alt, &icns_dst);
+    }
+
+    let helper = app_dir()?.join("launch-tor-browser-oniongate.sh");
+    fs::write(
+        &helper,
+        format!("#!/bin/zsh\nexec open -a \"{}\"\n", app.display()),
+    )
+    .map_err(|e| format!("Failed to write helper script: {e}"))?;
+    chmod_exec(&helper)?;
+
+    let _ = Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
+        .args(["-f", &app.display().to_string()])
+        .status();
+
+    crate::logs::append(format!(
+        "Installed Tor Browser via OnionGate launcher at {}",
+        app.display()
+    ));
+    Ok(format!(
+        "Installed launcher at {}. Connect OnionGate, then open it instead of stock Tor Browser.",
+        app.display()
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn remove_macos_tor_browser_launcher() -> Result<String, String> {
+    let app = macos_tor_browser_launcher_path();
+    if app.is_dir() {
+        fs::remove_dir_all(&app).map_err(|e| format!("Failed to remove {}: {e}", app.display()))?;
+    }
+    let helper = app_dir()?.join("launch-tor-browser-oniongate.sh");
+    if helper.exists() {
+        let _ = fs::remove_file(helper);
+    }
+    crate::logs::append("Removed Tor Browser via OnionGate launcher");
+    Ok("Removed Tor Browser via OnionGate from ~/Applications".into())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_tor_browser_launcher_desktop_path() -> PathBuf {
+    home_dir()
+        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+        .join(".local/share/applications/tor-browser-oniongate.desktop")
+}
+
+#[cfg(target_os = "linux")]
+fn find_linux_tor_browser_start() -> Option<PathBuf> {
+    let home = home_dir().ok()?;
+    let candidates = [
+        home.join("tor-browser/Browser/start-tor-browser"),
+        home.join("tor-browser_en-US/Browser/start-tor-browser"),
+        home.join(".local/share/torbrowser/tbb/x86_64/tor-browser/Browser/start-tor-browser"),
+        PathBuf::from("/usr/bin/torbrowser"),
+        PathBuf::from("/usr/bin/tor-browser"),
+    ];
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+#[cfg(target_os = "linux")]
+fn install_linux_tor_browser_launcher() -> Result<String, String> {
+    let start = find_linux_tor_browser_start().ok_or_else(|| {
+        "Tor Browser not found. Install it (e.g. extract under ~/tor-browser) first.".to_string()
+    })?;
+    let cookie = control_cookie_path()?;
+    let wrapper = app_dir()?.join("launch-tor-browser-oniongate.sh");
+    let env = tor_browser_env_exports(&cookie);
+    let script = format!(
+        "#!/bin/bash\n\
+# Generated by OnionGate — external Tor for Tor Browser.\n\
+{env}\
+if ! (command -v nc >/dev/null && nc -z -w 1 \"{SOCKS_HOST}\" \"{BROWSER_SOCKS_PORT}\") >/dev/null 2>&1; then\n\
+  echo \"OnionGate is not Connected (nothing on {SOCKS_HOST}:{BROWSER_SOCKS_PORT})\" >&2\n\
+  exit 1\n\
+fi\n\
+if [ ! -f \"$TOR_CONTROL_COOKIE_AUTH_FILE\" ]; then\n\
+  echo \"OnionGate Tor control cookie missing — Connect OnionGate first\" >&2\n\
+  exit 1\n\
+fi\n\
+exec \"{}\" \"$@\"\n",
+        start.display()
+    );
+    fs::write(&wrapper, &script).map_err(|e| format!("Failed to write launcher: {e}"))?;
+    chmod_exec(&wrapper)?;
+
+    let desktop = linux_tor_browser_launcher_desktop_path();
+    if let Some(parent) = desktop.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create applications dir: {e}"))?;
+    }
+    let desktop_body = format!(
+        "[Desktop Entry]\n\
+Type=Application\n\
+Name=Tor Browser via OnionGate\n\
+Comment=Tor Browser using OnionGate-managed Tor (no stacked Tor)\n\
+Exec={}\n\
+Terminal=false\n\
+Categories=Network;WebBrowser;\n\
+",
+        wrapper.display()
+    );
+    fs::write(&desktop, desktop_body).map_err(|e| format!("Failed to write desktop entry: {e}"))?;
+
+    crate::logs::append(format!(
+        "Installed Tor Browser via OnionGate launcher at {}",
+        desktop.display()
+    ));
+    Ok(format!(
+        "Installed Tor Browser via OnionGate in your app menu ({})",
+        desktop.display()
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn remove_linux_tor_browser_launcher() -> Result<String, String> {
+    let desktop = linux_tor_browser_launcher_desktop_path();
+    if desktop.is_file() {
+        fs::remove_file(&desktop)
+            .map_err(|e| format!("Failed to remove {}: {e}", desktop.display()))?;
+    }
+    let wrapper = app_dir()?.join("launch-tor-browser-oniongate.sh");
+    if wrapper.exists() {
+        let _ = fs::remove_file(wrapper);
+    }
+    crate::logs::append("Removed Tor Browser via OnionGate launcher");
+    Ok("Removed Tor Browser via OnionGate from your app menu".into())
 }

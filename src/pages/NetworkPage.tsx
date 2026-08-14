@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,6 +8,7 @@ import { SettingRow } from "@/components/ui/setting-row";
 import { Switch } from "@/components/ui/switch";
 import { InfoTip } from "@/components/ui/tooltip";
 import { LoadState } from "@/components/ui/load-state";
+import { StrictLockConsent } from "@/components/DenyAlert";
 import type { TorApp } from "@/hooks/useTorApp";
 import type { AppSettings } from "@/lib/types";
 
@@ -32,6 +34,9 @@ export function NetworkPage({
     refreshSettings,
     searchRelays,
   } = app;
+  const [lockConsent, setLockConsent] = useState(false);
+  const [disableLock, setDisableLock] = useState(false);
+  const [disableTyped, setDisableTyped] = useState("");
 
   if (!settings) {
     return (
@@ -157,12 +162,12 @@ export function NetworkPage({
                   label: settings.kill_switch ? "On" : "Off",
                   tone: settings.kill_switch ? "ok" : "default",
                 }}
-                description="Blocks clearnet UDP/QUIC leaks (admin). In TUN mode, strict_route also fails closed for TCP if Tor drops."
-                risk="Does not replace careful app behavior — apps that ignore SOCKS/TUN can still leak."
+                description="Steady-state block for clearnet UDP/QUIC and IPv6 after you are Protected. Connect/reconnect already arms a separate network lock so traffic cannot leak during bootstrap."
+                risk="Does not replace careful app behavior — apps that ignore SOCKS/TUN can still leak TCP in proxy mode."
               />
             </span>
           }
-          description="Block UDP/QUIC leaks (admin). TUN uses strict_route for TCP."
+          description="Steady-state UDP/QUIC + IPv6 block (admin). Transitions always lock the network."
         >
           <Switch
             checked={settings.kill_switch}
@@ -178,6 +183,53 @@ export function NetworkPage({
             }
           />
         </SettingRow>
+
+        <SettingRow
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              NIC default-deny
+              <InfoTip
+                title="NIC default-deny"
+                status={{
+                  label: settings.strict_tcp_lock ? "On" : "Off",
+                  tone: settings.strict_tcp_lock ? "ok" : "default",
+                }}
+                description="macOS pf drops every outbound IP packet except loopback, DHCP, and OnionGate Tor’s allowlisted endpoints. Apple Push and iCloud break. Not two-machine isolation."
+                risk="A destination exception is a hole for every process on this Mac. Snowflake/meek cannot use this lock."
+              />
+            </span>
+          }
+          description="Default-deny on the real interface (macOS). Requires a consent dialog."
+        >
+          <Switch
+            checked={settings.strict_tcp_lock}
+            disabled={
+              busy ||
+              settings.last_connect_strategy.includes("snowflake") ||
+              settings.last_connect_strategy.includes("meek")
+            }
+            onCheckedChange={(enabled) => {
+              if (enabled) {
+                setLockConsent(true);
+                return;
+              }
+              setDisableLock(true);
+            }}
+          />
+        </SettingRow>
+
+        {settings.strict_tcp_lock ? (
+          <SettingRow
+            title="Allow LAN"
+            description="Pass RFC1918 and link-local while the NIC lock is on. Not Maximum Isolation."
+          >
+            <Switch
+              checked={settings.allow_lan}
+              disabled={busy}
+              onCheckedChange={(v) => saveSettings({ allow_lan: v })}
+            />
+          </SettingRow>
+        ) : null}
 
       </div>
 
@@ -355,6 +407,61 @@ export function NetworkPage({
           </div>
         ) : null}
       </div>
+
+      {lockConsent ? (
+        <StrictLockConsent
+          onCancel={() => setLockConsent(false)}
+          onConfirm={() => {
+            setLockConsent(false);
+            void saveSettings({
+              strict_tcp_lock: true,
+              kill_switch: true,
+              remote_dns: true,
+            });
+          }}
+        />
+      ) : null}
+      {disableLock ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="flex w-full max-w-md flex-col rounded-2xl border border-line bg-panel p-5 shadow-xl">
+            <h2 className="text-base font-semibold">Turn off NIC default-deny</h2>
+            <p className="mt-2 text-sm text-muted">
+              Public TCP can leave this Mac again. Type LEAK to confirm.
+            </p>
+            <Input
+              className="mt-3"
+              value={disableTyped}
+              onChange={(e) => setDisableTyped(e.target.value)}
+            />
+            <div className="mt-4 flex flex-col gap-2">
+              <Button
+                variant="danger"
+                disabled={disableTyped.trim().toUpperCase() !== "LEAK"}
+                onClick={() => {
+                  setDisableLock(false);
+                  setDisableTyped("");
+                  void saveSettings({ strict_tcp_lock: false });
+                }}
+              >
+                Disable lock
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setDisableLock(false);
+                  setDisableTyped("");
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
     </section>
   );

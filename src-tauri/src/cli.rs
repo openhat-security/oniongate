@@ -30,7 +30,11 @@ enum Command {
     /// Best-effort cleanup using the recovery journal and live process discovery.
     Stop,
     /// Request a new Tor identity (NEWNYM).
-    Newnym,
+    Newnym {
+        /// Terminate processes with live clearnet sockets, then NEWNYM.
+        #[arg(long)]
+        kill_clearnet: bool,
+    },
     /// List configured bridge lines.
     Bridges,
     /// Print current settings as JSON.
@@ -38,6 +42,19 @@ enum Command {
     /// Publish and manage onion sites.
     #[command(subcommand)]
     Host(HostCommand),
+    /// Privileged helper daemon (install, status, remove).
+    #[command(subcommand)]
+    Helper(HelperCommand),
+}
+
+#[derive(Subcommand)]
+enum HelperCommand {
+    /// Show whether the helper is installed and reachable.
+    Status,
+    /// Install or refresh the helper and start it.
+    Start,
+    /// Unload and remove the helper.
+    Stop,
 }
 
 #[derive(Subcommand)]
@@ -119,7 +136,7 @@ pub async fn run(args: &[String]) -> i32 {
         Command::Status => status().await,
         Command::Start => start().await,
         Command::Stop => stop().await,
-        Command::Newnym => report(tor::new_identity().await),
+        Command::Newnym { kill_clearnet } => newnym(kill_clearnet).await,
         Command::Bridges => {
             let s = settings::load();
             if s.bridge_lines.is_empty() {
@@ -139,6 +156,26 @@ pub async fn run(args: &[String]) -> i32 {
             Err(e) => fail(e.to_string()),
         },
         Command::Host(command) => host(command).await,
+        Command::Helper(command) => helper(command),
+    }
+}
+
+fn helper(command: HelperCommand) -> i32 {
+    match command {
+        HelperCommand::Status => {
+            let status = crate::helper::service::status();
+            println!("supported={}", status.supported);
+            println!("installed={}", status.installed);
+            println!("running={}", status.running);
+            println!("detail={}", status.detail);
+            if status.running {
+                0
+            } else {
+                1
+            }
+        }
+        HelperCommand::Start => report(crate::helper::service::ensure()),
+        HelperCommand::Stop => report(crate::helper::service::uninstall()),
     }
 }
 
@@ -155,6 +192,17 @@ fn report(result: Result<String, String>) -> i32 {
         }
         Err(e) => fail(e),
     }
+}
+
+async fn newnym(kill_clearnet: bool) -> i32 {
+    if kill_clearnet {
+        let _ = crate::egress_watch::sample_now();
+        match crate::apps_lifecycle::kill_clearnet_processes().await {
+            Ok(kill) => println!("{}", kill.detail),
+            Err(e) => return fail(e),
+        }
+    }
+    report(tor::new_identity().await)
 }
 
 async fn status() -> i32 {
@@ -177,6 +225,9 @@ async fn status() -> i32 {
         crate::onion_service::persistent::list().len()
     );
     println!("temporary_sites={}", crate::onion_service::list().len());
+    let watch = crate::egress_watch::sample_now();
+    println!("egress_watch_active={}", watch.watching);
+    println!("egress_bypass={}", watch.bypass);
     if tor::control_reachable() {
         match tor::bootstrap_progress().await {
             Ok(p) => println!("bootstrap={p}"),
@@ -198,8 +249,17 @@ async fn start() -> i32 {
     };
     match outcome {
         Ok(msg) => {
-            let _ = crate::session::set_phase(crate::session::SessionPhase::Protected, None);
+            let _ = crate::session::set_phase(
+                crate::session::SessionPhase::Degraded,
+                Some(
+                    "CLI start brought up managed Tor only; TUN, kill switch, and proxy are not applied"
+                        .into(),
+                ),
+            );
             println!("{msg}");
+            println!(
+                "session_phase=Degraded (managed Tor only; use the desktop app for a Protected boundary)"
+            );
             // Keep the managed child alive for the session rather than killing
             // it when this process exits.
             std::mem::forget(managed);
@@ -225,6 +285,7 @@ async fn stop() -> i32 {
             &managed_singbox,
             &managed_snowflake,
             &saved_proxy,
+            crate::cleanup::TeardownMode::RestoreHost,
         )
         .await,
     )
@@ -436,5 +497,27 @@ mod tests {
         assert!(Cli::try_parse_from(["oniongate", "host", "auth", "rm", "blog", "alice"]).is_ok());
         assert!(Cli::try_parse_from(["oniongate", "host", "auth", "off", "blog"]).is_ok());
         assert!(Cli::try_parse_from(["oniongate", "host", "auth", "add", "blog"]).is_err());
+    }
+
+    #[test]
+    fn newnym_kill_clearnet_flag_parses() {
+        let cli = Cli::try_parse_from(["oniongate", "newnym", "--kill-clearnet"]).unwrap();
+        match cli.command {
+            Some(Command::Newnym { kill_clearnet }) => assert!(kill_clearnet),
+            _ => panic!("expected newnym"),
+        }
+        let cli = Cli::try_parse_from(["oniongate", "newnym"]).unwrap();
+        match cli.command {
+            Some(Command::Newnym { kill_clearnet }) => assert!(!kill_clearnet),
+            _ => panic!("expected newnym"),
+        }
+    }
+
+    #[test]
+    fn helper_subcommands_parse() {
+        assert!(Cli::try_parse_from(["oniongate", "helper", "status"]).is_ok());
+        assert!(Cli::try_parse_from(["oniongate", "helper", "start"]).is_ok());
+        assert!(Cli::try_parse_from(["oniongate", "helper", "stop"]).is_ok());
+        assert!(Cli::try_parse_from(["oniongate", "helper"]).is_err());
     }
 }

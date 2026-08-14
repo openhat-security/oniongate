@@ -1,12 +1,15 @@
+mod apps_lifecycle;
 mod bypass;
 mod cleanup;
 pub mod cli;
 mod commands;
 mod db;
+mod deny_log;
 mod deps;
 mod detect;
+mod egress_watch;
 mod elevate;
-mod firewall;
+pub mod firewall;
 mod harden;
 pub mod helper;
 mod ip;
@@ -52,6 +55,10 @@ pub fn run() {
             }
             session_guard::start_monitor();
             workstation::start_monitor();
+            egress_watch::start_monitor();
+            ip::start_monitor();
+            crate::firewall::start_strict_watchdog();
+            watch_termination_signals(app.handle().clone());
             Ok(())
         })
         .manage(AppState::default())
@@ -69,6 +76,9 @@ pub fn run() {
             commands::clear_tor_logs,
             commands::start_tor,
             commands::stop_tor,
+            commands::arm_network_lock,
+            commands::disarm_network_lock,
+            commands::quit_user_applications,
             commands::get_recovery_status,
             commands::emergency_restore,
             commands::start_tun,
@@ -86,6 +96,8 @@ pub fn run() {
             commands::run_leak_verifier,
             commands::get_latest_leak_report,
             commands::export_latest_leak_report,
+            commands::get_egress_watch,
+            commands::reveal_egress_path,
             commands::start_onion_service,
             commands::list_onion_services,
             commands::stop_onion_service,
@@ -120,7 +132,10 @@ pub fn run() {
             commands::enable_proxy,
             commands::disable_proxy,
             commands::new_identity,
+            commands::kill_clearnet_and_new_identity,
+            commands::kill_clearnet_process,
             commands::refresh_ips,
+            commands::get_ips,
             commands::get_bypass_helpers,
             commands::write_shell_env,
             commands::get_shell_hook_status,
@@ -139,6 +154,10 @@ pub fn run() {
             commands::get_macports_status,
             commands::open_macports_download,
             commands::get_kill_siri_status,
+            commands::get_deny_log,
+            commands::acknowledge_deny,
+            commands::add_strict_exception,
+            commands::remove_strict_exception,
             commands::get_workstation_posture,
             commands::get_persistence_report,
             commands::save_persistence_baseline,
@@ -170,4 +189,33 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+fn watch_termination_signals(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        #[cfg(unix)]
+        {
+            let mut sigterm =
+                match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+            let mut sigint =
+                match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()) {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+            tokio::select! {
+                _ = sigterm.recv() => {}
+                _ = sigint.recv() => {}
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            if tokio::signal::ctrl_c().await.is_err() {
+                return;
+            }
+        }
+        app.exit(0);
+    });
 }

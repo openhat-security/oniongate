@@ -1,3 +1,4 @@
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -6,6 +7,11 @@ use crate::tor::process::ISOLATED_SOCKS_PORT;
 use crate::tor::{SOCKS_HOST, SOCKS_PORT};
 
 const IP_URL: &str = "https://api.ipify.org?format=json";
+const POLL_IDLE: Duration = Duration::from_secs(30);
+const POLL_NEED_TOR: Duration = Duration::from_secs(5);
+const POLL_SLICE: Duration = Duration::from_secs(2);
+
+static SNAPSHOT: LazyLock<Mutex<IpReport>> = LazyLock::new(|| Mutex::new(IpReport::default()));
 
 #[derive(Debug, Serialize, Deserialize)]
 struct IpifyResponse {
@@ -31,7 +37,7 @@ pub struct GeoLocation {
     pub country_code: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IpReport {
     pub direct_ip: Option<String>,
     pub tor_ip: Option<String>,
@@ -216,8 +222,51 @@ async fn enrich(report: IpReport) -> IpReport {
     }
 }
 
+fn store(report: IpReport) -> IpReport {
+    if let Ok(mut guard) = SNAPSHOT.lock() {
+        *guard = report.clone();
+    }
+    report
+}
+
+/// Latest sample. Never fetches on the caller thread — the daemon owns ipify.
+pub fn current() -> IpReport {
+    SNAPSHOT
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default()
+}
+
+pub fn start_monitor() {
+    tauri::async_runtime::spawn(async {
+        loop {
+            let _ = refresh_ips().await;
+            let socks = crate::tor::socks_reachable();
+            let need_tor = socks && current().tor_ip.is_none();
+            let target = if need_tor { POLL_NEED_TOR } else { POLL_IDLE };
+            let mut waited = Duration::ZERO;
+            while waited < target {
+                tokio::time::sleep(POLL_SLICE).await;
+                waited += POLL_SLICE;
+                if crate::tor::socks_reachable() != socks {
+                    break;
+                }
+            }
+        }
+    });
+}
+
 pub async fn refresh_ips() -> IpReport {
-    let (direct, tor) = tokio::join!(fetch_direct(), fetch_via_tor());
+    let socks_up = crate::tor::socks_reachable();
+    let direct_fut = fetch_direct();
+    let tor_fut = async {
+        if socks_up {
+            fetch_via_tor().await
+        } else {
+            Err("Tor SOCKS is not up".into())
+        }
+    };
+    let (direct, tor) = tokio::join!(direct_fut, tor_fut);
     let report = IpReport {
         direct_ip: direct.as_ref().ok().cloned(),
         tor_ip: tor.as_ref().ok().cloned(),
@@ -226,7 +275,7 @@ pub async fn refresh_ips() -> IpReport {
         direct_error: direct.err(),
         tor_error: tor.err(),
     };
-    enrich(report).await
+    store(enrich(report).await)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,5 +344,5 @@ pub async fn refresh_ips_after_newnym() -> IpReport {
         direct_error: direct.err(),
         tor_error: tor.err(),
     };
-    enrich(report).await
+    store(enrich(report).await)
 }

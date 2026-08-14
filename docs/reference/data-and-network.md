@@ -37,7 +37,8 @@ or another process running as your user remains in scope.
 
 The session database keeps session start/end times, selected strategy and mode,
 live byte totals/rates, circuit counts, and identity-change counts. It does not
-store destination history.
+store destination history. The Verify page's live connection census is process-memory only. Full
+addresses may appear in the UI; saved leak reports store a bypass count only.
 
 App-specific helpers deliberately write outside the main data directory:
 Firefox `user.js`, Cursor/VS Code settings, Claude Code settings, shell startup
@@ -69,7 +70,8 @@ Conjure also contact their broker, front, or registration infrastructure.
 
 ### IP and location display
 
-On explicit refreshes, connection changes, app-network tests, and verification:
+A background task refreshes them after connect, after New Identity, and about
+every 30 seconds otherwise:
 
 - `api.ipify.org` receives one request with application proxies disabled; in
   Proxy mode this supplies the direct baseline, while active TUN captures it;

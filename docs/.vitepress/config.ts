@@ -47,6 +47,7 @@ export default defineConfig({
         text: "Security",
         items: [
           { text: "Threat model", link: "/reference/threat-model" },
+          { text: "Residual leaks", link: "/reference/residual-leaks" },
           { text: "Privacy", link: "/reference/privacy" },
           { text: "Local data and network activity", link: "/reference/data-and-network" },
           { text: "Platform support", link: "/reference/platform-support" },
@@ -89,6 +90,7 @@ export default defineConfig({
           items: [
             { text: "Check and harden this machine", link: "/guide/system" },
             { text: "Settings and logs", link: "/guide/settings" },
+            { text: "Daemons", link: "/guide/daemons" },
             { text: "Recovery and troubleshooting", link: "/guide/troubleshooting" },
             { text: "Demo script", link: "/guide/demo" },
           ],
@@ -102,15 +104,17 @@ export default defineConfig({
             { text: "Platform support", link: "/reference/platform-support" },
             { text: "Local data and network activity", link: "/reference/data-and-network" },
             { text: "Threat model", link: "/reference/threat-model" },
+            { text: "Residual leaks", link: "/reference/residual-leaks" },
             { text: "Privacy", link: "/reference/privacy" },
             { text: "Third-party software", link: "/reference/third-party" },
             { text: "Release process", link: "/reference/release" },
+            { text: "Changelog", link: "/reference/changelog" },
+            { text: "Release audit trail", link: "/reference/release-audit" },
           ],
         },
         {
           text: "Project",
           items: [
-            { text: "Changelog", link: `${repo}/blob/main/CHANGELOG.md` },
             { text: "Security policy", link: `${repo}/blob/main/SECURITY.md` },
             { text: "Contributing", link: `${repo}/blob/main/CONTRIBUTING.md` },
             { text: "Code of conduct", link: `${repo}/blob/main/CODE_OF_CONDUCT.md` },

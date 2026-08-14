@@ -38,8 +38,10 @@ within 7 days, and coordinate publication after a fix is available.
   packet capture or proof that every application followed policy.
 - Session Guard process suspension is available on macOS/Linux; Windows uses
   the same TUN/app policy without that additional suspension layer.
-- The optional root helper currently accepts only typed kill-switch operations,
-  but its packaging and client-authentication hardening remain pre-stable.
+- The optional root helper accepts only typed operations (kill switch,
+  transition lock, deny harvest, pid/bundle stop). A signed macOS helper
+  checks the peer's code signature; unsigned debug builds and Windows pipe
+  ACLs remain pre-stable.
 
 See the [threat model](docs/reference/threat-model.md) for the detailed model,
 the [platform matrix](docs/reference/platform-support.md), and the

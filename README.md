@@ -24,10 +24,60 @@ terminal required — and ships a headless CLI for servers and scripts.
 
 **[Read the documentation →](https://irruptio-security.github.io/oniongate/)**
 
-> OnionGate is **not** a VPN, Tor Browser, Tails, or Whonix. It does not stop
-> browser fingerprinting or global traffic correlation. Read the
-> [threat model](docs/reference/threat-model.md) before relying on it for
-> sensitive work.
+> This project is **alpha**. It is **not** a VPN, Tor Browser, Tails, or a
+> two-machine Tor gateway, and it must not be the sole control for high-risk
+> work. It does not stop browser fingerprinting or global traffic correlation.
+> Read the [threat model](docs/reference/threat-model.md) and
+> [residual leaks](docs/reference/residual-leaks.md) first.
+
+## Potential leaks
+
+Same-host routing cannot match a workstation that has no clearnet NIC. Even with
+the macOS NIC default-deny on, these remain:
+
+- kernel / NECP paths that never hit `pf`
+- any local process TCP’ing to a listed Tor endpoint IP
+- DHCP, optional LAN, and user destination exceptions
+- Linux/Windows (this lock is macOS-only)
+- Snowflake/meek (lock refused)
+
+Full list: [Residual leaks](docs/reference/residual-leaks.md).
+
+## Routing modes: SOCKS vs TUN vs two-machine isolation
+
+OnionGate can feel like a small “Tor VPN” app, but the protection boundary
+depends on which mode you use. A two-machine gateway keeps the workstation off
+the clearnet NIC. OnionGate is a same-host app that manages Tor and optionally a
+TUN.
+
+| | System SOCKS (proxy mode) | TUN mode | Two-machine gateway |
+| --- | --- | --- | --- |
+| Who must opt in | Each app that honors SOCKS | Most TCP on the machine | Everything in the workstation |
+| Ordinary browsers (Chrome, Firefox, Safari, …) | Only if configured for SOCKS + remote DNS | Yes — captured by the tunnel | Yes — no clearnet path |
+| Tor Browser | Ignores OS proxy; runs its own Tor | Stock TB stacks Tor-over-Tor unless redirected | Gateway Tor + no stacked Tor |
+| DNS | App must use `socks5h` / remote DNS | Tor `DNSPort` when Resolve through Tor is on | Forced through the gateway |
+| UDP / QUIC | Can leak | Blocked | Blocked / unavailable |
+| Fail closed if Tor dies | Weak (apps may go direct) | Stronger (`strict_route` + Session Guard + optional NIC lock) | Strong (workstation has no clearnet) |
+| Isolation | Process / OS trust boundary | Process / OS trust boundary | Separate machines + filtered control port |
+
+**You do not need “Tor Browser via OnionGate” for arbitrary browsers.**  
+Connect in **TUN** mode (all traffic via Tor, or your split-tunnel policy). Chrome,
+Firefox, Safari, and most apps then reach the network through OnionGate’s Tor.
+
+**When you do need the Tor Browser launcher:** only if you want **Tor Browser**
+itself. Tor Browser always expects its own Tor on `127.0.0.1:9150`. OnionGate
+already binds those Tor Browser ports on its managed Tor; the
+**Apps → Tor Browser via OnionGate** launcher sets `TOR_SKIP_LAUNCH` and points
+SOCKS/control at OnionGate so about:tor treats Tor as externally managed.
+Open that launcher, not the stock Tor Browser icon, while OnionGate is
+Connected. Details: [Route applications](docs/guide/apps.md) and
+[Connect](docs/guide/connection.md).
+
+**SOCKS proxy alone** is a convenience path: easy, but any app can ignore it.
+Prefer TUN when you want “any browser / most apps” containment on one machine.
+On macOS, Maximum Isolation adds a kernel `pf` default-deny so leftover public
+IP (including Apple daemons) cannot leave the NIC except to Tor’s allowlisted
+endpoints.
 
 ## What you can do
 
@@ -39,10 +89,11 @@ terminal required — and ships a headless CLI for servers and scripts.
   stop, address gone for good) or **permanent** (same address across restarts,
   with named client credentials you can revoke individually). See the
   [hosting guide](docs/guide/hosting.md).
-- **Inspect the live boundary** — run diagnostics for egress separation, DNS,
-  IPv6, UDP/QUIC, and per-app policy, then export a redacted report. Public IPs
-  are compared in memory, never stored. Verification is not packet capture or
-  formal proof.
+- **Inspect the live boundary** — a background watch lists processes with
+  clearnet TCP that is not going through OnionGate (ephemeral, not stored).
+  Run on-demand diagnostics for egress separation, DNS, IPv6, UDP/QUIC, and
+  per-app policy, then export a redacted report. Public IPs are compared in
+  memory, never stored. Verification is not packet capture or formal proof.
 - **Stay in control from the tray** — inspect live status, connect/disconnect,
   rotate identity, or run Emergency Restore from the native macOS, Linux, or
   Windows widget.
@@ -83,8 +134,11 @@ for your OS. Prefer the Makefile targets (`make help` lists them all).
 
 ```bash
 make setup          # npm ci + download/verify Tor / sing-box sidecars
-make start          # tauri dev
+make start          # start daemons, then tauri dev
 ```
+
+Daemons (privileged helper install, status, and what is *not* a daemon) are
+documented in [docs/guide/daemons.md](docs/guide/daemons.md).
 
 Build a release bundle from source:
 

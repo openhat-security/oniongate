@@ -2,6 +2,7 @@ use std::fs;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use tokio::process::{Child, Command};
@@ -10,8 +11,20 @@ use which::which;
 pub const SOCKS_HOST: &str = "127.0.0.1";
 pub const SOCKS_PORT: u16 = 9050;
 pub const ISOLATED_SOCKS_PORT: u16 = 9060;
+/// Tor Browser's default SOCKS port. Bound with IsolateSOCKSAuth so TB keeps
+/// per-first-party stream isolation when it uses OnionGate's Tor.
+pub const BROWSER_SOCKS_PORT: u16 = 9150;
 pub const CONTROL_PORT: u16 = 9051;
+/// Tor Browser's default control port (same cookie as CONTROL_PORT).
+pub const BROWSER_CONTROL_PORT: u16 = 9151;
 pub const DNS_PORT: u16 = 9053;
+
+/// Path to the managed Tor control cookie (for Tor Browser / external controllers).
+pub fn control_cookie_path() -> Result<PathBuf, String> {
+    Ok(ensure_data_dir()?
+        .join("tor-data")
+        .join("control_auth_cookie"))
+}
 
 fn host_triple() -> &'static str {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -109,6 +122,22 @@ fn bundled_binary_candidates(name: &str) -> Vec<PathBuf> {
 }
 
 pub fn find_tor_binary() -> Option<PathBuf> {
+    static CACHED: Mutex<Option<PathBuf>> = Mutex::new(None);
+    if let Ok(guard) = CACHED.lock() {
+        if let Some(path) = guard.as_ref() {
+            if is_executable(path) {
+                return Some(path.clone());
+            }
+        }
+    }
+    let found = find_tor_binary_scan();
+    if let Ok(mut guard) = CACHED.lock() {
+        *guard = found.clone();
+    }
+    found
+}
+
+fn find_tor_binary_scan() -> Option<PathBuf> {
     // Always prefer expert-bundle tor (dylibs beside the binary) over a bare sidecar copy.
     for candidate in bundled_binary_candidates("tor") {
         if is_executable(&candidate) {
@@ -386,11 +415,17 @@ fn write_managed_torrc(app_dir: &Path) -> Result<PathBuf, String> {
     // only point at them.
     extra.push_str(&crate::onion_service::persistent::torrc_block());
 
+    if settings.strict_tcp_lock {
+        extra.push_str("ClientUseIPv6 0\n");
+    }
+
     let contents = format!(
         "\
 SocksPort {SOCKS_HOST}:{SOCKS_PORT}
 SocksPort {SOCKS_HOST}:{ISOLATED_SOCKS_PORT} IsolateSOCKSAuth
+SocksPort {SOCKS_HOST}:{BROWSER_SOCKS_PORT} IsolateSOCKSAuth
 ControlPort {SOCKS_HOST}:{CONTROL_PORT}
+ControlPort {SOCKS_HOST}:{BROWSER_CONTROL_PORT}
 CookieAuthentication 1
 Log {} file {}
 {dns_block}{extra}DataDirectory {}
@@ -652,5 +687,27 @@ pub async fn stop_tor(managed: &mut Option<Child>) -> Result<String, String> {
         Ok("Stopped Tor".into())
     } else {
         Ok(format!("Stopped Tor ({})", stopped.join(", ")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_torrc_binds_tor_browser_default_ports() {
+        let app_dir = ensure_data_dir().expect("data dir");
+        let torrc = write_managed_torrc(&app_dir).expect("write torrc");
+        let text = fs::read_to_string(&torrc).expect("read torrc");
+        assert!(
+            text.contains(&format!(
+                "SocksPort {SOCKS_HOST}:{BROWSER_SOCKS_PORT} IsolateSOCKSAuth"
+            )),
+            "Tor Browser SOCKS must keep IsolateSOCKSAuth: {text}"
+        );
+        assert!(
+            text.contains(&format!("ControlPort {SOCKS_HOST}:{BROWSER_CONTROL_PORT}")),
+            "Tor Browser control port missing: {text}"
+        );
     }
 }

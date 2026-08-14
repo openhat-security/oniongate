@@ -1,6 +1,6 @@
 [package]
 name = "tor-socks-gui"
-version = "0.2.0"
+version = "0.2.1"
 description = "OnionGate — Tor Workstation Toolkit with isolated routing and Onion Host"
 authors = ["adamsiwiec"]
 edition = "2021"
@@ -17,8 +17,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "oniongate"
 path = "src/bin/oniongate_cli.rs"
 
-# Optional privileged helper daemon. Platform service installers register it
-# once; its typed protocol currently exposes only fixed kill-switch operations.
+# Privileged helper daemon. Platform service installers register it once.
+# Typed protocol only — see docs/guide/daemons.md.
 [[bin]]
 name = "oniongate-helper"
 path = "src/bin/oniongate_helper.rs"
@@ -30,7 +30,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["process", "time", "io-util", "rt-multi-thread", "macros", "sync", "net"] }
+tokio = { version = "1", features = ["process", "time", "io-util", "rt-multi-thread", "macros", "sync", "net", "signal"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks"] }
 dirs = "6"
 thiserror = "2"

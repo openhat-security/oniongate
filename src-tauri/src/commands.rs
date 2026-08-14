@@ -48,6 +48,7 @@ pub struct AppStatus {
     pub pt: Vec<tor::PtStatus>,
     pub tun: crate::tun::TunStatus,
     pub firewall: crate::firewall::FirewallStatus,
+    pub network_lock: crate::firewall::NetworkLockStatus,
     pub deps: Vec<crate::deps::DepStatus>,
     pub proxy: ProxyStatus,
     pub socks_host: String,
@@ -57,6 +58,26 @@ pub struct AppStatus {
     pub install_hint: String,
     pub persistence_changes: usize,
     pub session_phase: crate::session::SessionPhase,
+}
+
+fn finish_protected() -> Result<(), String> {
+    let settings = settings::load();
+    if settings.strict_tcp_lock {
+        let fw = crate::firewall::status();
+        if !fw.strict_deny_live {
+            return crate::session::set_phase(
+                crate::session::SessionPhase::Degraded,
+                Some("NIC lock is on but live pf default-deny was not verified".into()),
+            );
+        }
+        if !settings.strict_tcp_exceptions.is_empty() {
+            return crate::session::set_phase(
+                crate::session::SessionPhase::Degraded,
+                Some("NIC lock has destination exceptions (machine-wide leak)".into()),
+            );
+        }
+    }
+    crate::session::set_phase(crate::session::SessionPhase::Protected, None)
 }
 
 fn install_hint() -> String {
@@ -93,6 +114,7 @@ pub async fn get_status() -> AppStatus {
         pt: tor::pt_status_all(),
         tun: crate::tun::status(&None),
         firewall: crate::firewall::status(),
+        network_lock: crate::firewall::network_lock_status(),
         deps: crate::deps::deps_status(),
         proxy: proxy::get_status(),
         socks_host: SOCKS_HOST.into(),
@@ -244,9 +266,50 @@ async fn maybe_auto_enable_proxy(
 }
 
 #[tauri::command]
-pub async fn start_tor(state: State<'_, AppState>) -> Result<String, String> {
+pub async fn arm_network_lock() -> Result<String, String> {
     crate::session::begin_connect()?;
+    crate::firewall::arm_for_transition().await
+}
+
+#[tauri::command]
+pub async fn disarm_network_lock() -> Result<String, String> {
+    // Only disarm when we never reached a protected session — used when the
+    // user cancels the pre-connect dialog.
+    let phase = crate::session::load().phase;
+    if phase == crate::session::SessionPhase::Protected {
+        return Err("Cannot disarm the network lock while protected".into());
+    }
+    let msg = crate::firewall::disarm_after_transition().await?;
+    if phase == crate::session::SessionPhase::Connecting {
+        let _ = crate::session::clear();
+    }
+    Ok(msg)
+}
+
+#[tauri::command]
+pub async fn quit_user_applications() -> Result<crate::apps_lifecycle::QuitAppsResult, String> {
+    crate::apps_lifecycle::quit_user_applications().await
+}
+
+#[tauri::command]
+pub async fn start_tor(state: State<'_, AppState>) -> Result<String, String> {
     let settings = settings::load();
+    if settings.strict_tcp_lock {
+        if let Some(reason) = tor::endpoints::strategy_blocks_strict_lock(&settings) {
+            return Err(reason.into());
+        }
+        let vpn = crate::vpn_detect::detect();
+        if vpn.active {
+            return Err(format!("NIC lock refuses a competing VPN ({})", vpn.detail));
+        }
+        if cfg!(not(target_os = "macos")) {
+            return Err("The default-deny NIC lock is macOS-only".into());
+        }
+    }
+    crate::session::begin_connect()?;
+    // Fail closed during the whole bootstrap/TUN/proxy bring-up window — same
+    // idea as a VPN that blocks traffic while reconnecting.
+    let lock_msg = crate::firewall::arm_for_transition().await?;
     crate::session::expect_transports(
         tor::pt::transports_from_bridge_lines(&settings.bridge_lines)
             .into_iter()
@@ -255,23 +318,38 @@ pub async fn start_tor(state: State<'_, AppState>) -> Result<String, String> {
     )?;
     let msg = {
         let mut guard = state.managed_tor.lock().await;
-        if settings.smart_connect {
-            let result = tor::smart_connect(&mut guard).await?;
-            result.message
+        let started = if settings.smart_connect {
+            let result = tor::smart_connect(&mut guard).await;
+            result.map(|r| r.message)
         } else {
-            let m = tor::start_tor(&mut guard).await?;
-            let strat = if settings.bridges_enabled {
-                "bridges"
-            } else {
-                "direct"
-            };
-            let _ = crate::db::start_session(strat, &settings.connection_mode);
+            let m = tor::start_tor(&mut guard).await;
+            if m.is_ok() {
+                let strat = if settings.bridges_enabled {
+                    "bridges"
+                } else {
+                    "direct"
+                };
+                let _ = crate::db::start_session(strat, &settings.connection_mode);
+            }
             m
+        };
+        match started {
+            Ok(message) => message,
+            Err(e) => {
+                // Keep the lock on failure so clearnet does not reopen while the
+                // user is still in a Connecting/Degraded journal state. They can
+                // Disconnect / Emergency Restore to clear it.
+                let _ = crate::session::set_phase(
+                    crate::session::SessionPhase::Degraded,
+                    Some(e.clone()),
+                );
+                return Err(e);
+            }
         }
     };
     crate::logs::append(&msg);
 
-    let mut parts = vec![msg];
+    let mut parts = vec![lock_msg, msg];
 
     if settings.connection_mode == "tun" {
         crate::session::expect_tun(true)?;
@@ -291,7 +369,8 @@ pub async fn start_tor(state: State<'_, AppState>) -> Result<String, String> {
                     Some(e.clone()),
                 );
                 return Err(format!(
-                    "Tor is up, but TUN was not started ({e}). Switched back to Proxy mode."
+                    "Tor is up, but TUN was not started ({e}). Switched back to Proxy mode. \
+                     Network stays locked until you disconnect."
                 ));
             }
         }
@@ -315,7 +394,17 @@ pub async fn start_tor(state: State<'_, AppState>) -> Result<String, String> {
                 }
             }
         }
-        crate::session::set_phase(crate::session::SessionPhase::Protected, None)?;
+        // Steady-state containment is TUN (+ optional KS). Drop the transition lock.
+        match crate::firewall::disarm_after_transition().await {
+            Ok(msg) => parts.push(msg),
+            Err(e) => {
+                crate::logs::append(format!("Network lock release failed: {e}"));
+                parts.push(format!(
+                    "Protected, but the transition lock could not be cleared ({e})"
+                ));
+            }
+        }
+        finish_protected()?;
         return Ok(parts.join(". "));
     }
 
@@ -333,17 +422,26 @@ pub async fn start_tor(state: State<'_, AppState>) -> Result<String, String> {
         other => other,
     };
     match &result {
-        Ok(_) => {
-            crate::session::set_phase(crate::session::SessionPhase::Protected, None)?;
-        }
+        Ok(message) => match crate::firewall::disarm_after_transition().await {
+            Ok(unlocked) => {
+                finish_protected()?;
+                Ok(format!("{message}. {unlocked}"))
+            }
+            Err(e) => {
+                finish_protected()?;
+                Ok(format!(
+                    "{message}. Protected, but the transition lock could not be cleared ({e})"
+                ))
+            }
+        },
         Err(error) => {
             let _ = crate::session::set_phase(
                 crate::session::SessionPhase::Degraded,
                 Some(error.clone()),
             );
+            Err(error.clone())
         }
     }
-    result
 }
 
 #[tauri::command]
@@ -385,10 +483,24 @@ pub fn set_bridges_enabled(enabled: bool) -> Result<AppSettings, String> {
 #[tauri::command]
 pub async fn apply_tor_config(state: State<'_, AppState>) -> Result<String, String> {
     // Bridges / PT / exit pin need a managed restart so torrc is authoritative.
+    // Lock clearnet for the restart window so apps cannot race onto a direct path.
+    let _ = crate::session::set_phase(crate::session::SessionPhase::Connecting, None);
+    let lock_msg = crate::firewall::arm_for_transition().await?;
     let mut guard = state.managed_tor.lock().await;
-    let msg = tor::restart_managed(&mut guard).await?;
+    let msg = match tor::restart_managed(&mut guard).await {
+        Ok(m) => m,
+        Err(e) => {
+            let _ =
+                crate::session::set_phase(crate::session::SessionPhase::Degraded, Some(e.clone()));
+            return Err(e);
+        }
+    };
     crate::logs::append(&msg);
-    Ok(msg)
+    let unlock = crate::firewall::disarm_after_transition()
+        .await
+        .unwrap_or_else(|e| format!("transition lock still held ({e})"));
+    finish_protected()?;
+    Ok(format!("{lock_msg}. {msg}. {unlock}"))
 }
 
 #[tauri::command]
@@ -473,6 +585,16 @@ pub fn export_latest_leak_report(path: String) -> Result<String, String> {
     let json = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| format!("Failed to export report: {e}"))?;
     Ok(format!("Exported redacted report to {path}"))
+}
+
+#[tauri::command]
+pub fn get_egress_watch() -> crate::egress_watch::EgressWatch {
+    crate::egress_watch::current()
+}
+
+#[tauri::command]
+pub fn reveal_egress_path(pid: u32) -> Result<String, String> {
+    crate::egress_watch::reveal_pid(pid)
 }
 
 #[tauri::command]
@@ -895,6 +1017,7 @@ pub async fn stop_tor(state: State<'_, AppState>) -> Result<String, String> {
         &state.managed_singbox,
         &state.managed_snowflake,
         &state.saved_proxy,
+        crate::cleanup::TeardownMode::Disconnect,
     )
     .await
 }
@@ -912,6 +1035,7 @@ pub async fn emergency_restore(state: State<'_, AppState>) -> Result<String, Str
         &state.managed_singbox,
         &state.managed_snowflake,
         &state.saved_proxy,
+        crate::cleanup::TeardownMode::RestoreHost,
     )
     .await
 }
@@ -1048,8 +1172,19 @@ pub struct NewIdentityResult {
     pub ips: IpReport,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KillClearnetIdentityResult {
+    pub kill: crate::apps_lifecycle::ClearnetKillResult,
+    pub identity: NewIdentityResult,
+    pub detail: String,
+}
+
 #[tauri::command]
 pub async fn new_identity(state: State<'_, AppState>) -> Result<NewIdentityResult, String> {
+    new_identity_inner(state).await
+}
+
+async fn new_identity_inner(state: State<'_, AppState>) -> Result<NewIdentityResult, String> {
     {
         let mut guard = state.managed_tor.lock().await;
         tor::ensure_tor_with_control(&mut guard).await?;
@@ -1067,6 +1202,41 @@ pub async fn new_identity(state: State<'_, AppState>) -> Result<NewIdentityResul
         ),
     };
     Ok(NewIdentityResult { message, ips })
+}
+
+/// Kill processes with live clearnet sockets, then request NEWNYM. Never
+/// accepts caller-supplied PIDs — only the current census.
+#[tauri::command]
+pub async fn kill_clearnet_and_new_identity(
+    state: State<'_, AppState>,
+) -> Result<KillClearnetIdentityResult, String> {
+    if !tor::socks_reachable() || !tor::control_reachable() {
+        return Err(
+            "Connect to Tor before killing clearnet processes and requesting a new identity".into(),
+        );
+    }
+    let kill = crate::apps_lifecycle::kill_clearnet_processes().await?;
+    let identity = new_identity_inner(state).await?;
+    let detail = format!("{}. {}", kill.detail, identity.message);
+    Ok(KillClearnetIdentityResult {
+        kill,
+        identity,
+        detail,
+    })
+}
+
+/// Kill one process from the live Not through Tor census. Destinations are
+/// never accepted or logged; only pid and process name appear in the result.
+#[tauri::command]
+pub async fn kill_clearnet_process(
+    pid: u32,
+) -> Result<crate::apps_lifecycle::ProcessKillResult, String> {
+    crate::apps_lifecycle::kill_clearnet_process(pid).await
+}
+
+#[tauri::command]
+pub fn get_ips() -> IpReport {
+    ip::current()
 }
 
 #[tauri::command]
@@ -1162,4 +1332,47 @@ pub fn open_macports_download() -> Result<String, String> {
 #[tauri::command]
 pub fn get_kill_siri_status() -> crate::harden::KillSiriStatus {
     crate::harden::kill_siri_status()
+}
+
+#[tauri::command]
+pub fn get_deny_log() -> crate::deny_log::DenyLogSnapshot {
+    crate::deny_log::snapshot()
+}
+
+#[tauri::command]
+pub fn acknowledge_deny(process: String, dest: String, port: u16, proto: String) {
+    crate::deny_log::acknowledge(&process, &dest, port, &proto);
+}
+
+#[tauri::command]
+pub async fn add_strict_exception(dest: String, persist: bool) -> Result<String, String> {
+    let ip = crate::firewall::strict::parse_ip(&dest)?;
+    let settings = settings::load();
+    if !settings.strict_tcp_lock {
+        return Err("NIC lock is off".into());
+    }
+    let addr = ip.to_string();
+    crate::logs::append("NIC lock exception added (destination hole; session degraded)");
+    settings::update(|s| {
+        if !s.strict_tcp_exceptions.contains(&addr) {
+            s.strict_tcp_exceptions.push(addr.clone());
+        }
+        if !persist {
+            // Session-only: still stored in settings so pf can reload; user is warned.
+        }
+    })?;
+    crate::session::set_phase(
+        crate::session::SessionPhase::Degraded,
+        Some("NIC lock has a destination exception (machine-wide leak)".into()),
+    )?;
+    crate::firewall::enable_kill_switch().await
+}
+
+#[tauri::command]
+pub async fn remove_strict_exception(dest: String) -> Result<String, String> {
+    settings::update(|s| {
+        s.strict_tcp_exceptions.retain(|item| item != &dest);
+    })?;
+    crate::logs::append("NIC lock exception removed");
+    crate::firewall::enable_kill_switch().await
 }

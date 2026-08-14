@@ -11,6 +11,7 @@ import { LoadState } from "@/components/ui/load-state";
 import type { TorApp } from "@/hooks/useTorApp";
 import type { AppSettings } from "@/lib/types";
 import { PRESETS, presetPatch, detectPreset, type PresetId } from "@/lib/presets";
+import { StrictLockConsent } from "@/components/DenyAlert";
 
 type HelperStatus = {
   supported: boolean;
@@ -31,6 +32,7 @@ export function SettingsPage({ app }: { app: TorApp }) {
   } = app;
   const [preset, setPreset] = useState<PresetId>("everyday");
   const [helper, setHelper] = useState<HelperStatus | null>(null);
+  const [lockConsent, setLockConsent] = useState(false);
 
   const refreshHelper = () =>
     invoke<HelperStatus>("privileged_helper_status")
@@ -54,7 +56,11 @@ export function SettingsPage({ app }: { app: TorApp }) {
   const currentPreset = detectPreset(settings);
   const currentPresetLabel =
     PRESETS.find((item) => item.id === currentPreset)?.label ?? "Custom";
-  const applyPreset = () =>
+  const applyPreset = () => {
+    if (preset === "maximum" && !settings.strict_tcp_lock) {
+      setLockConsent(true);
+      return;
+    }
     void run(async () => {
       await invoke<AppSettings>("update_settings", {
         next: { ...settings, ...presetPatch(preset) },
@@ -62,13 +68,16 @@ export function SettingsPage({ app }: { app: TorApp }) {
       await app.refreshSettings();
       return `Applied ${preset.replace("-", " ")} preset`;
     });
+  };
 
   return (
     <section className="flex flex-col gap-5">
       <header>
         <h2 className="text-xl font-semibold tracking-tight">Settings</h2>
         <p className="mt-1 text-sm text-muted">
-          Defaults, DNS, and optional volunteer relay.
+          Defaults, DNS, and optional volunteer relay. This build is alpha — not
+          a sole control for high-risk work. See the threat model and residual
+          leaks in the docs.
         </p>
       </header>
 
@@ -289,8 +298,9 @@ export function SettingsPage({ app }: { app: TorApp }) {
             </div>
             <p className="mt-0.5 text-xs text-muted">{helper.detail}</p>
             <p className="mt-1 text-[11px] text-muted">
-              Install once (one prompt). The current typed helper handles only
-              OnionGate's kill-switch rule; TUN, proxy, and hardening may still prompt.
+              Install once (one prompt). The typed helper handles kill switch,
+              NIC lock, deny harvest, and stopping a VPN/app. TUN, proxy, and
+              hardening may still prompt.
             </p>
           </div>
           {helper.installed ? (
@@ -383,6 +393,22 @@ export function SettingsPage({ app }: { app: TorApp }) {
           <span className="truncate">{status.tor_path}</span>
         ) : null}
       </div>
+
+      {lockConsent ? (
+        <StrictLockConsent
+          onCancel={() => setLockConsent(false)}
+          onConfirm={() => {
+            setLockConsent(false);
+            void run(async () => {
+              await invoke<AppSettings>("update_settings", {
+                next: { ...settings, ...presetPatch("maximum") },
+              });
+              await app.refreshSettings();
+              return "Applied Maximum Isolation preset";
+            });
+          }}
+        />
+      ) : null}
 
     </section>
   );

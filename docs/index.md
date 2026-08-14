@@ -35,5 +35,5 @@ features:
 ## Not a replacement for Tor Browser
 
 OnionGate supports macOS, Linux, and Windows. It is not a VPN or a replacement
-for Tor Browser, Tails, or Whonix. Review [platform support](/reference/platform-support)
+for Tor Browser, Tails, or a two-machine Tor gateway. Review [platform support](/reference/platform-support)
 and the [threat model](/reference/threat-model) before sensitive use.

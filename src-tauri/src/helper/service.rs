@@ -82,6 +82,45 @@ pub fn install() -> Result<String, String> {
     }
 }
 
+/// Install the helper if it is missing, or replace it when the built binary
+/// changed. No elevation when the installed copy is already running and matches.
+pub fn ensure() -> Result<String, String> {
+    let built = helper_binary()?;
+    if client::available() {
+        if let Some(installed) = installed_helper_path() {
+            if file_sha256(&built) == file_sha256(std::path::Path::new(installed)) {
+                return Ok("Privileged helper already running".into());
+            }
+        }
+    }
+    install()
+}
+
+fn installed_helper_path() -> Option<&'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        Some(MACOS_HELPER_DEST)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Some(LINUX_HELPER_DEST)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Some(WINDOWS_HELPER_DEST)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        None
+    }
+}
+
+fn file_sha256(path: &std::path::Path) -> Option<[u8; 32]> {
+    use sha2::{Digest, Sha256};
+    let bytes = std::fs::read(path).ok()?;
+    Some(Sha256::digest(bytes).into())
+}
+
 pub fn uninstall() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
@@ -117,11 +156,11 @@ fn macos_status() -> HelperStatus {
         installed,
         running,
         detail: if running {
-            "Helper installed and running — kill-switch changes apply without prompts".into()
+            "Helper installed and running — typed privileged operations apply without prompts".into()
         } else if installed {
             "Helper installed but not running (it starts at boot/login)".into()
         } else {
-            "Helper not installed — kill-switch changes use the administrator prompt".into()
+            "Helper not installed — privileged changes use the administrator prompt".into()
         },
     }
 }
@@ -130,6 +169,9 @@ fn macos_status() -> HelperStatus {
 fn macos_install() -> Result<String, String> {
     use crate::elevate::shell_quote;
     let src = helper_binary()?;
+    if let Ok(app) = std::env::current_exe() {
+        crate::helper::identity::verify_helper_for_install(&src, &app)?;
+    }
     let uid = current_uid();
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -199,11 +241,11 @@ fn linux_status() -> HelperStatus {
         installed,
         running,
         detail: if running {
-            "Helper installed and running — kill-switch changes apply without prompts".into()
+            "Helper installed and running — typed privileged operations apply without prompts".into()
         } else if installed {
             "Helper installed but not running".into()
         } else {
-            "Helper not installed — kill-switch changes prompt via pkexec/sudo".into()
+            "Helper not installed — privileged changes prompt via pkexec/sudo".into()
         },
     }
 }
@@ -268,12 +310,12 @@ fn windows_status() -> HelperStatus {
         installed,
         running,
         detail: if running {
-            "Helper service installed and running — kill-switch changes apply without prompts"
+            "Helper service installed and running — typed privileged operations apply without prompts"
                 .into()
         } else if installed {
             "Helper service installed but not running".into()
         } else {
-            "Helper not installed — kill-switch changes prompt via UAC".into()
+            "Helper not installed — privileged changes prompt via UAC".into()
         },
     }
 }

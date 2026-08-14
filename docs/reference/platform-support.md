@@ -78,9 +78,11 @@ On Windows:
 
 ## Privileged helper packaging status
 
-The repository contains install/service code for `oniongate-helper`, and its
-current protocol is limited to typed kill-switch operations. The helper must be
-built, placed beside the app, and signed with the same identity as the app.
+The repository contains install/service code for `oniongate-helper`. The typed
+protocol covers ping, kill switch, transition lock, macOS deny harvest, pid
+terminate, and `.app` stop. The helper must be built, placed beside the app, and
+signed with the same identity as the app. A signed helper refuses unsigned
+peers; unsigned debug builds authenticate by UID only.
 
 Release CI now builds the helper per target and applies a release-only Tauri
 sidecar overlay so development builds do not depend on a staged helper. The

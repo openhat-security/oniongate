@@ -27,7 +27,13 @@ OnionGate stores only what is needed to operate requested features:
 - permanent Onion Host metadata: nickname, ports, public hostname,
   authorization state, and client names/public keys.
 
-The application does not maintain destination or browsing history.
+The application does not maintain destination or browsing history. The live
+connection census on Verify may show full local and remote addresses in the UI
+because only you can see that window; those values stay in process memory and
+are never logged, saved, or uploaded. When the macOS NIC lock is on, blocked
+attempts are written to a capped local deny journal (process name, path,
+destination, port, count). That journal is not uploaded. Tor allowlist IPs,
+command lines, and secrets are not stored there.
 
 ## Public-address checks
 

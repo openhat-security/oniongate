@@ -46,7 +46,7 @@ fn signal(pid: u32, name: &str) -> bool {
 
 fn suspend_selected() {
     let settings = crate::settings::load();
-    if !settings.session_guard || !settings.split_tunnel || settings.app_routing_policy != "only" {
+    if !settings.session_guard || settings.route_apps.is_empty() {
         release_all();
         return;
     }

@@ -13,8 +13,13 @@ OnionGate starts its own Tor process with loopback-only listeners:
 
 - SOCKS at `127.0.0.1:9050`;
 - isolated-auth SOCKS at `127.0.0.1:9060`;
-- control port at `127.0.0.1:9051`;
+- Tor Browser SOCKS at `127.0.0.1:9150` (`IsolateSOCKSAuth`);
+- control ports at `127.0.0.1:9051` and `127.0.0.1:9151`;
 - DNSPort at `127.0.0.1:9053` when remote DNS is enabled.
+
+While those Tor Browser ports are bound, stock Tor Browser cannot start its own
+Tor on the same ports. Use **Apps → Tor Browser via OnionGate** so the browser
+skips its bundled Tor and treats OnionGate as the external Tor manager.
 
 If another Tor instance occupies SOCKS port 9050 without the required control
 port, OnionGate attempts to stop that instance and start the managed one. Do not
@@ -30,9 +35,10 @@ protected.
 ## Dashboard address and session counters
 
 **Current IP** shows the Tor-visible address when available, otherwise the
-default-path address, plus an approximate location. **Refresh IP** repeats those
-requests; the values remain in UI memory and are not saved to verification
-reports. See [Local data and network activity](/reference/data-and-network) for
+default-path address, plus an approximate location. A background task refreshes
+those values on its own (sooner after connect or New Identity, about every 30
+seconds otherwise). The values remain in UI memory and are not saved to
+verification reports. See [Local data and network activity](/reference/data-and-network) for
 the providers and TUN behavior.
 
 The dashboard also shows current download/upload rates, total session bytes,
@@ -72,9 +78,10 @@ It is a compatibility mode, not forced containment:
 Use the **Apps** page for known bypass-prone software, or use TUN when you need a
 stronger system routing boundary.
 
-The Connect dashboard's **System proxy: ON/OFF** button is a live shortcut for
-the operating-system SOCKS setting. It is disabled in TUN mode because TUN owns
-the routing boundary.
+The operating-system SOCKS setting is not a Connect-page toggle. Choose **Proxy**
+or **TUN** under Routing; **Settings → Preferences** controls whether Proxy mode
+auto-enables the OS proxy after connect. The Current IP card shows the live path
+(Direct, SOCKS, system proxy, or TUN) as status only.
 
 On disconnect, OnionGate restores the proxy state it captured before enabling
 its own proxy. If no captured snapshot is available, it disables only its SOCKS
@@ -113,25 +120,45 @@ When disabled, OnionGate uses system DNS in TUN mode and cannot claim DNS
 containment for proxy applications. `.onion` names require Tor-side hostname
 resolution.
 
+## Network lock (connect / reconnect / disconnect)
+
+Before Tor bootstraps, while Tor restarts, and while a session tears down,
+OnionGate arms a **network lock** so clearnet cannot be used during the gap —
+the same idea as a VPN that blocks traffic while reconnecting.
+
+The lock always blocks clearnet **UDP/QUIC** and **IPv6** (loopback stays open
+for Tor's local SOCKS/control/DNS ports). On Windows it also blocks clearnet
+**TCP**, with an allow rule for the Tor binary so guards remain reachable.
+macOS and Linux cannot match Tor by executable path in `pf`/`nftables`, so TCP
+during the bootstrap window is contained by quitting or suspending apps and,
+once TUN is up, by `strict_route`.
+
+Connect asks whether to close foreground applications first. If you keep apps
+open, you must confirm that nothing linked to your identity is running. The
+network stays locked if bring-up fails; use Disconnect or Emergency Restore to
+clear it.
+
 ## Kill switch
 
-The kill switch blocks clearnet UDP/QUIC using a platform firewall rule:
+The kill switch is the **steady-state** firewall after a session is Protected.
+On Everyday it blocks clearnet UDP/QUIC and IPv6. On macOS, **NIC default-deny**
+(Maximum Isolation) instead drops **every** outbound IP packet except loopback,
+DHCP, and OnionGate Tor’s allowlisted endpoints. That is the control that stops
+Apple Push and other daemons from using the WAN IP.
 
-- macOS: a dedicated `pf` anchor;
-- Linux: a dedicated `nftables` table;
-- Windows: a named Windows Defender Firewall rule.
+TCP fail-closed without that lock still comes from TUN `strict_route` and
+Session Guard. Proxy-only apps that ignore SOCKS can still make direct TCP
+unless the NIC lock is on.
 
-It does **not** block all direct TCP. TCP fail-closed behavior comes from TUN's
-`strict_route` and, for explicitly selected applications, Session Guard.
-Proxy-only applications that ignore SOCKS can still make direct TCP
-connections.
+See [Residual leaks](/reference/residual-leaks) for what the lock does not
+cover.
 
 When the setting is saved, Connect re-applies the firewall rule in either Proxy
 or TUN mode. A requested rule that fails prevents a Protected badge.
 
 OnionGate writes a local recovery marker and verifies the live firewall rule
 where the platform permits it. Disconnect and Emergency Restore remove only
-OnionGate's rule.
+OnionGate's rules (kill switch and network lock).
 
 If a requested kill-switch enable action fails during TUN startup, OnionGate
 leaves the journal degraded and reports an error. If the action succeeds but
@@ -174,3 +201,4 @@ Windows; see [Platform support](/reference/platform-support).
 - [Route applications](/guide/apps)
 - [Verify the live boundary](/guide/verify)
 - [Threat model](/reference/threat-model)
+- [Residual leaks](/reference/residual-leaks)

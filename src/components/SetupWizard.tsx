@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import type { TorApp } from "@/hooks/useTorApp";
 import type { AppSettings } from "@/lib/types";
 import { PRESETS, presetPatch, type PresetId } from "@/lib/presets";
+import { StrictLockConsent } from "@/components/DenyAlert";
 import { cn } from "@/lib/utils";
 import { startWindowDrag } from "@/lib/drag";
 
@@ -13,6 +14,7 @@ export function SetupWizard({ app }: { app: TorApp }) {
   const isMac = app.detect?.os === "macos";
   const [step, setStep] = useState(0);
   const [preset, setPreset] = useState<PresetId>("everyday");
+  const [lockConsent, setLockConsent] = useState(false);
   const [adminState, setAdminState] = useState<"idle" | "granted" | "failed">(
     "idle",
   );
@@ -20,7 +22,11 @@ export function SetupWizard({ app }: { app: TorApp }) {
 
   const chosen = PRESETS.find((item) => item.id === preset);
 
-  const finish = () =>
+  const finish = () => {
+    if (preset === "maximum") {
+      setLockConsent(true);
+      return;
+    }
     void app.run(async () => {
       if (app.settings) {
         await invoke<AppSettings>("update_settings", {
@@ -30,6 +36,19 @@ export function SetupWizard({ app }: { app: TorApp }) {
       await invoke<AppSettings>("set_setup_complete", { done: true });
       await app.refreshSettings();
       return `Setup complete — applied the ${chosen?.label ?? preset} preset`;
+    });
+  };
+
+  const finishMaximum = () =>
+    void app.run(async () => {
+      if (app.settings) {
+        await invoke<AppSettings>("update_settings", {
+          next: { ...app.settings, ...presetPatch("maximum") },
+        });
+      }
+      await invoke<AppSettings>("set_setup_complete", { done: true });
+      await app.refreshSettings();
+      return "Setup complete — applied Maximum Isolation";
     });
 
   const skip = () =>
@@ -141,8 +160,10 @@ export function SetupWizard({ app }: { app: TorApp }) {
                 live routing and leak-prevention boundary.
               </p>
               <p className="rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-muted">
-                It is not a VPN, Tor Browser, or antivirus. For browser anonymity use Tor
-                Browser. This wizard sets sensible defaults you can change anytime.
+                This build is <span className="font-semibold text-ink">alpha</span> — not
+                a sole control for high-risk work. It is not a VPN, Tor Browser, or
+                antivirus. Read the threat model and residual leaks before relying on
+                it. This wizard sets defaults you can change anytime.
               </p>
             </div>
           ) : null}
@@ -280,6 +301,15 @@ export function SetupWizard({ app }: { app: TorApp }) {
           </div>
         </div>
       </div>
+      {lockConsent ? (
+        <StrictLockConsent
+          onCancel={() => setLockConsent(false)}
+          onConfirm={() => {
+            setLockConsent(false);
+            finishMaximum();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -38,6 +38,7 @@ export type FirewallStatus = {
   active: boolean;
   verified_live: boolean;
   marker_active: boolean;
+  strict_deny_live: boolean;
   detail: string;
 };
 
@@ -54,6 +55,14 @@ export type SessionPhase =
   | "protected"
   | "degraded"
   | "recovering";
+
+export type NetworkLockStatus = {
+  supported: boolean;
+  active: boolean;
+  verified_live: boolean;
+  marker_active: boolean;
+  detail: string;
+};
 
 export type AppStatus = {
   tor_installed: boolean;
@@ -72,6 +81,7 @@ export type AppStatus = {
   pt: PtStatus[];
   tun: TunStatus;
   firewall: FirewallStatus;
+  network_lock: NetworkLockStatus;
   deps: DepStatus[];
   proxy: ProxyStatus;
   socks_host: string;
@@ -180,11 +190,30 @@ export type AppSettings = {
   route_apps: AppIdentity[];
   app_routing_policy: "only" | "except";
   session_guard: boolean;
+  strict_tcp_lock: boolean;
+  strict_tcp_exceptions: string[];
+  allow_lan: boolean;
   circuit_epoch: number;
   entry_nodes: string;
   middle_nodes: string;
   exit_nodes_fp: string;
   setup_complete: boolean;
+};
+
+export type DenyEvent = {
+  process: string;
+  pid: number;
+  path: string;
+  dest: string;
+  port: number;
+  proto: string;
+  count: number;
+  last_seen_unix: number;
+  needs_popup: boolean;
+};
+
+export type DenyLogSnapshot = {
+  events: DenyEvent[];
 };
 
 export type AppIdentity = {
@@ -343,4 +372,70 @@ export type IssuedCredential = {
   client_name: string;
   credential: string;
   auth_private_line: string | null;
+};
+
+export type EgressFlow = {
+  process: string;
+  pid: number;
+  proto: string;
+  direction: string;
+  local: string;
+  remote: string;
+  class: string;
+  path: string;
+  location: string;
+  system: boolean;
+  count: number;
+};
+
+export type ClearnetProcess = {
+  process: string;
+  pid: number;
+  killable: boolean;
+  path: string;
+  location: string;
+  system: boolean;
+};
+
+export type EgressWatch = {
+  watching: boolean;
+  sampled_at_unix: number;
+  supported: boolean;
+  detail: string;
+  through_oniongate: number;
+  tor_transport: number;
+  lan: number;
+  local: number;
+  listen: number;
+  bypass: number;
+  total: number;
+  truncated: boolean;
+  flows: EgressFlow[];
+  clearnet_processes: ClearnetProcess[];
+};
+
+export type KilledProcess = {
+  process: string;
+  pid: number;
+};
+
+export type ClearnetKillResult = {
+  killed: KilledProcess[];
+  skipped: KilledProcess[];
+  failed: KilledProcess[];
+  detail: string;
+};
+
+export type KillClearnetIdentityResult = {
+  kill: ClearnetKillResult;
+  identity: NewIdentityResult;
+  detail: string;
+};
+
+export type ProcessKillResult = {
+  process: string;
+  pid: number;
+  ok: boolean;
+  detail: string;
+  log: string;
 };

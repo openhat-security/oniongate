@@ -6,10 +6,9 @@ managed Tor and permanent onion hosting.
 
 ::: warning Full protected-session parity is not implemented yet
 `oniongate start` starts Tor with the saved direct/bridge strategy, but it does
-not currently apply the desktop app's saved TUN, kill-switch, or
-operating-system proxy boundary. Do not treat CLI `session_phase=Protected` as
-proof that those components are live. Use the desktop app for that workflow
-until CLI orchestration and long-running session ownership are completed.
+not apply the desktop app's saved TUN, kill-switch, or operating-system proxy
+boundary. The journal is left **Degraded** (managed Tor only). Use the desktop
+app for a Protected boundary until CLI orchestration is completed.
 :::
 
 Exit codes: `0` success, `1` runtime failure, `2` usage error.
@@ -25,10 +24,17 @@ oniongate host --help
 oniongate status     # connection, bootstrap, and recovery state
 oniongate start      # start managed Tor using the saved direct/bridge strategy
 oniongate stop       # best-effort cleanup from journal + live process discovery
-oniongate newnym     # request a new Tor identity
+oniongate newnym                 # request a new Tor identity
+oniongate newnym --kill-clearnet # terminate clearnet processes, then NEWNYM
 oniongate bridges    # list configured bridge lines
 oniongate settings   # print settings as JSON
+oniongate helper status   # privileged helper installed / running
+oniongate helper start    # install or refresh the helper
+oniongate helper stop     # remove the helper
 ```
+
+`helper start` is what `make dev` runs after building the daemon. See
+[Daemons](/guide/daemons).
 
 `status` with no subcommand is the default, so bare `oniongate` prints status.
 Read the individual `socks_up`, `control_up`, `dns_up`, connection-mode, and
@@ -37,6 +43,13 @@ recovery fields; the phase alone is insufficient.
 `stop` starts in a new process with no GUI-owned child handles. It uses the
 recovery journal plus live process/port/firewall/proxy discovery, so inspect its
 output and run `status` afterward. A cleanup error means state may remain.
+`make cleanup` is the same restore path used when `make dev` exits.
+
+`newnym --kill-clearnet` samples live sockets, terminates processes that currently
+have public Internet flows not through OnionGate (skipping OnionGate, Tor,
+editor/terminal, and core OS processes), then sends `NEWNYM`. It does not
+restart OnionGate. Only PIDs from that census are killed; the flag never takes
+a pid list.
 
 There is not yet a headless `emergency-restore` subcommand. If `status` reports
 `recovery_needed=true`, open the desktop app and run Emergency Restore, or stop
@@ -66,6 +79,8 @@ Status fields:
 | `recovery_needed` | A previous owner exited while OnionGate state remains live |
 | `permanent_sites` | Sites in the local permanent registry |
 | `temporary_sites` | Sites known to this process only |
+| `egress_watch_active` | Connection daemon (or a one-shot sample) is classifying sockets |
+| `egress_bypass` | Count of established public TCP flows not through OnionGate |
 | `bootstrap` / `bootstrap_error` | Control-port bootstrap result when available |
 
 ## Hosting
@@ -198,9 +213,9 @@ changing it would not be expected to change the key or onion address.
 
 The current CLI has no commands for TUN, the firewall kill switch, system proxy,
 selected-app routing, leak-report export, bridge scanning, workstation
-Checkup/Harden/Startup Items, helper installation, or Emergency Restore.
-`settings` can display their saved preferences but does not apply those live
-boundaries.
+Checkup/Harden/Startup Items, or Emergency Restore. `settings` can display
+their saved preferences but does not apply those live boundaries. Helper
+install and removal are `oniongate helper start` / `stop`.
 
 ## Scripting example
 

@@ -49,6 +49,19 @@ fn remediation_for(id: &str) -> Option<String> {
             "Open the Connect screen and run Emergency Restore to reconcile firewall, TUN, and \
              proxy state with the crash-recovery journal."
         }
+        "egress_watch" => {
+            "Those processes have established TCP that is not OnionGate SOCKS, TUN, or OnionGate's \
+             Tor. In Proxy mode enable TUN or point the app at SOCKS. In TUN mode, quit the app or \
+             add it to selected-app routing. Destinations are not stored."
+        }
+        "nic_lock" => {
+            "Turn the NIC lock off, or reconnect so pf can load the default-deny rules. \
+             Snowflake/meek cannot use this lock."
+        }
+        "nic_lock_exceptions" => {
+            "Remove destination exceptions on Routing. Each exception is a machine-wide hole."
+        }
+        "nic_lock_vpn" => "Disconnect the other VPN before using the NIC lock.",
         _ => return None,
     };
     Some(text.into())
@@ -235,11 +248,7 @@ pub async fn run() -> LeakReport {
         },
     ));
     checks.push(
-        if settings.session_guard
-            && settings.split_tunnel
-            && settings.app_routing_policy == "only"
-            && !settings.route_apps.is_empty()
-        {
+        if settings.session_guard && !settings.route_apps.is_empty() {
             check(
                 "session_guard",
                 "Session Guard",
@@ -262,6 +271,80 @@ pub async fn run() -> LeakReport {
         !recovery.needed,
         "Live firewall/TUN/proxy state was compared with the crash-recovery journal",
     ));
+
+    let watch = crate::egress_watch::current();
+    let expected_direct = settings.connection_mode != "tun"
+        || (settings.split_tunnel
+            && settings.app_routing_policy == "only"
+            && !settings.strict_tcp_lock);
+    checks.push(if !watch.watching {
+        warn(
+            "egress_watch",
+            "Live clearnet watch",
+            "The connection daemon is idle until you Connect",
+        )
+    } else if watch.bypass == 0 {
+        check(
+            "egress_watch",
+            "Live clearnet watch",
+            true,
+            "No established clearnet TCP outside OnionGate, Tor, or LAN",
+        )
+    } else if expected_direct {
+        warn(
+            "egress_watch",
+            "Live clearnet watch",
+            format!(
+                "{} established clearnet TCP flow(s) are not through OnionGate (counts only; destinations are not stored)",
+                watch.bypass
+            ),
+        )
+    } else {
+        check(
+            "egress_watch",
+            "Live clearnet watch",
+            false,
+            format!(
+                "{} established clearnet TCP flow(s) are not through OnionGate while TUN is capturing the default path",
+                watch.bypass
+            ),
+        )
+    });
+
+    if settings.strict_tcp_lock {
+        let fw = crate::firewall::status();
+        checks.push(check(
+            "nic_lock",
+            "NIC default-deny",
+            fw.strict_deny_live,
+            if fw.strict_deny_live {
+                "Live pf default-deny is active (public IP blocked except Tor endpoints)"
+            } else {
+                "NIC lock is requested but live pf default-deny was not verified"
+            },
+        ));
+        checks.push(check(
+            "nic_lock_exceptions",
+            "NIC lock exceptions",
+            settings.strict_tcp_exceptions.is_empty(),
+            if settings.strict_tcp_exceptions.is_empty() {
+                "No destination exceptions"
+            } else {
+                "Destination exceptions are loaded (machine-wide leak; session should be Degraded)"
+            },
+        ));
+        let vpn = crate::vpn_detect::detect();
+        checks.push(check(
+            "nic_lock_vpn",
+            "Competing VPN",
+            !vpn.active,
+            if vpn.active {
+                vpn.detail
+            } else {
+                "No competing VPN detected".into()
+            },
+        ));
+    }
 
     let passed = checks.iter().all(|item| item.status != "fail");
     let report = LeakReport {
