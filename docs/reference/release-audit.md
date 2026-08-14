@@ -14,9 +14,8 @@ not a substitute for the user-facing [changelog](/reference/changelog).
 Do not paste bridge lines, onion keys, credentials, public IPs, or full
 command lines into commit subjects.
 
-## 0.2.1
+## 0.2.2
 
-Range: `v0.2.0..HEAD`.
+Range: `v0.2.1..HEAD`.
 
-- `1bd9abf Prepare 0.2.1 alpha: NIC lock, fail-closed honesty, and changelog trail.`
-- `93c2e27 security enhancements + harderning + tor vs. not tor process monitor + ui cleanup + resilience`
+- (no commits in this range)

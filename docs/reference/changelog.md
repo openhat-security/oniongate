@@ -14,6 +14,23 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-13
+
+### Changed
+
+- GitHub Actions now builds the four-platform draft (macOS Apple Silicon, macOS
+  Intel, Linux x86_64, Windows x86_64) with updater metadata, checksums, and
+  SBOMs. The 0.2.1 drop was a local unsigned Apple Silicon installer only.
+
+### Fixed
+
+- Rust formatting so release verification and CI can run on the tag.
+
+### Known limitations
+
+- This remains a 0.x alpha. Apple notarization and Authenticode are still
+  optional. Do not treat it as a sole control for high-risk work.
+
 ## [0.2.1] - 2026-08-13
 
 ### Added

@@ -4,9 +4,9 @@
 //! force-kills itself, the shell used to launch it, or core OS UI processes.
 
 use std::collections::HashSet;
-use std::path::Path;
 #[cfg(target_os = "macos")]
 use std::fs;
+use std::path::Path;
 #[cfg(target_os = "macos")]
 use std::path::PathBuf;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -354,9 +354,8 @@ fn pids_under_prefix(prefix: &str) -> Vec<u32> {
         .split_whitespace()
         .filter_map(|s| s.parse().ok())
         .filter(|&pid| {
-            crate::egress_watch::pid_executable_path(pid).is_some_and(|path| {
-                path == prefix || path.starts_with(&format!("{prefix}/"))
-            })
+            crate::egress_watch::pid_executable_path(pid)
+                .is_some_and(|path| path == prefix || path.starts_with(&format!("{prefix}/")))
         })
         .collect()
 }
@@ -583,8 +582,7 @@ async fn stop_bundle_logged(pid: u32, name: &str, bundle: &str) -> KillAttempt {
         pid,
         &crate::egress_watch::pid_executable_path(pid).unwrap_or_default(),
         name,
-    )
-    {
+    ) {
         lines.push(e.clone());
         return KillAttempt {
             ok: false,
@@ -763,8 +761,7 @@ async fn elevated_stop_bundle(pid: u32, bundle: &str, lines: &mut Vec<String>) {
         script.push_str(&format!("/bin/kill -KILL {sibling} 2>/dev/null || true; "));
     }
     script.push_str("echo STOPPED");
-    let prompt =
-        "OnionGate needs administrator access to stop a VPN/app that keeps relaunching.";
+    let prompt = "OnionGate needs administrator access to stop a VPN/app that keeps relaunching.";
     lines.push("$ administrator launchctl bootout + kill".into());
     let result =
         tokio::task::spawn_blocking(move || crate::elevate::run_shell_captured(&script, prompt))
@@ -1373,10 +1370,8 @@ mod tests {
     #[test]
     fn application_bundle_from_nested_macos_binary() {
         assert_eq!(
-            application_bundle(
-                "/Applications/ExpressVPN.app/Contents/MacOS/expressvpn-daemon"
-            )
-            .as_deref(),
+            application_bundle("/Applications/ExpressVPN.app/Contents/MacOS/expressvpn-daemon")
+                .as_deref(),
             Some("/Applications/ExpressVPN.app")
         );
         assert_eq!(application_bundle("/usr/libexec/apsd"), None);

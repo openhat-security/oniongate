@@ -144,13 +144,8 @@ mod unix_daemon {
     #[cfg(target_os = "macos")]
     fn pid_executable(pid: u32) -> Option<std::path::PathBuf> {
         let mut buf = [0u8; 4096];
-        let n = unsafe {
-            libc::proc_pidpath(
-                pid as i32,
-                buf.as_mut_ptr().cast(),
-                buf.len() as u32,
-            )
-        };
+        let n =
+            unsafe { libc::proc_pidpath(pid as i32, buf.as_mut_ptr().cast(), buf.len() as u32) };
         if n <= 0 {
             return None;
         }

@@ -156,7 +156,8 @@ fn macos_status() -> HelperStatus {
         installed,
         running,
         detail: if running {
-            "Helper installed and running — typed privileged operations apply without prompts".into()
+            "Helper installed and running — typed privileged operations apply without prompts"
+                .into()
         } else if installed {
             "Helper installed but not running (it starts at boot/login)".into()
         } else {
@@ -241,7 +242,8 @@ fn linux_status() -> HelperStatus {
         installed,
         running,
         detail: if running {
-            "Helper installed and running — typed privileged operations apply without prompts".into()
+            "Helper installed and running — typed privileged operations apply without prompts"
+                .into()
         } else if installed {
             "Helper installed but not running".into()
         } else {

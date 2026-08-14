@@ -237,9 +237,8 @@ mod tests {
 
     #[test]
     fn stop_application_uses_snake_case_tag() {
-        let text =
-            String::from_utf8(encode(&HelperRequest::StopApplication { pid: 529 }).unwrap())
-                .unwrap();
+        let text = String::from_utf8(encode(&HelperRequest::StopApplication { pid: 529 }).unwrap())
+            .unwrap();
         assert!(text.contains("\"op\":\"stop_application\""));
         assert!(text.contains("\"pid\":529"));
     }
