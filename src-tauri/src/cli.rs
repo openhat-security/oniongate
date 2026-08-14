@@ -42,6 +42,19 @@ enum Command {
     /// Publish and manage onion sites.
     #[command(subcommand)]
     Host(HostCommand),
+    /// Privileged helper daemon (install, status, remove).
+    #[command(subcommand)]
+    Helper(HelperCommand),
+}
+
+#[derive(Subcommand)]
+enum HelperCommand {
+    /// Show whether the helper is installed and reachable.
+    Status,
+    /// Install or refresh the helper and start it.
+    Start,
+    /// Unload and remove the helper.
+    Stop,
 }
 
 #[derive(Subcommand)]
@@ -143,6 +156,26 @@ pub async fn run(args: &[String]) -> i32 {
             Err(e) => fail(e.to_string()),
         },
         Command::Host(command) => host(command).await,
+        Command::Helper(command) => helper(command),
+    }
+}
+
+fn helper(command: HelperCommand) -> i32 {
+    match command {
+        HelperCommand::Status => {
+            let status = crate::helper::service::status();
+            println!("supported={}", status.supported);
+            println!("installed={}", status.installed);
+            println!("running={}", status.running);
+            println!("detail={}", status.detail);
+            if status.running {
+                0
+            } else {
+                1
+            }
+        }
+        HelperCommand::Start => report(crate::helper::service::ensure()),
+        HelperCommand::Stop => report(crate::helper::service::uninstall()),
     }
 }
 
@@ -216,8 +249,17 @@ async fn start() -> i32 {
     };
     match outcome {
         Ok(msg) => {
-            let _ = crate::session::set_phase(crate::session::SessionPhase::Protected, None);
+            let _ = crate::session::set_phase(
+                crate::session::SessionPhase::Degraded,
+                Some(
+                    "CLI start brought up managed Tor only; TUN, kill switch, and proxy are not applied"
+                        .into(),
+                ),
+            );
             println!("{msg}");
+            println!(
+                "session_phase=Degraded (managed Tor only; use the desktop app for a Protected boundary)"
+            );
             // Keep the managed child alive for the session rather than killing
             // it when this process exits.
             std::mem::forget(managed);
@@ -243,6 +285,7 @@ async fn stop() -> i32 {
             &managed_singbox,
             &managed_snowflake,
             &saved_proxy,
+            crate::cleanup::TeardownMode::RestoreHost,
         )
         .await,
     )
@@ -468,5 +511,13 @@ mod tests {
             Some(Command::Newnym { kill_clearnet }) => assert!(!kill_clearnet),
             _ => panic!("expected newnym"),
         }
+    }
+
+    #[test]
+    fn helper_subcommands_parse() {
+        assert!(Cli::try_parse_from(["oniongate", "helper", "status"]).is_ok());
+        assert!(Cli::try_parse_from(["oniongate", "helper", "start"]).is_ok());
+        assert!(Cli::try_parse_from(["oniongate", "helper", "stop"]).is_ok());
+        assert!(Cli::try_parse_from(["oniongate", "helper"]).is_err());
     }
 }

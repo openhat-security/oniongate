@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   Globe,
@@ -21,6 +22,7 @@ import { AppSettingsPage } from "@/pages/AppSettingsPage";
 import { Flash } from "@/components/Flash";
 import { SetupWizard } from "@/components/SetupWizard";
 import { ClearnetAlert } from "@/components/ClearnetAlert";
+import { DenyAlert } from "@/components/DenyAlert";
 import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 import type { Tab } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -248,6 +250,53 @@ export default function App() {
               onDismiss={() => {
                 setClearnetAlert(false);
                 setClearnetAlertDismissed(true);
+              }}
+            />
+          ) : null}
+          {app.denyLog?.events.find((e) => e.needs_popup) ? (
+            <DenyAlert
+              event={app.denyLog.events.find((e) => e.needs_popup)!}
+              busy={app.busy}
+              onKeepBlocked={() => {
+                const event = app.denyLog?.events.find((e) => e.needs_popup);
+                if (!event) return;
+                void invoke("acknowledge_deny", {
+                  process: event.process,
+                  dest: event.dest,
+                  port: event.port,
+                  proto: event.proto,
+                }).then(() => app.refreshDenyLog());
+              }}
+              onAllow={() => {
+                const event = app.denyLog?.events.find((e) => e.needs_popup);
+                if (!event) return;
+                void app.run(async () => {
+                  await invoke("acknowledge_deny", {
+                    process: event.process,
+                    dest: event.dest,
+                    port: event.port,
+                    proto: event.proto,
+                  });
+                  const msg = await invoke<string>("add_strict_exception", {
+                    dest: event.dest,
+                    persist: false,
+                  });
+                  await app.refreshDenyLog();
+                  await app.refreshSettings();
+                  return msg;
+                });
+              }}
+              onReview={() => {
+                const event = app.denyLog?.events.find((e) => e.needs_popup);
+                if (event) {
+                  void invoke("acknowledge_deny", {
+                    process: event.process,
+                    dest: event.dest,
+                    port: event.port,
+                    proto: event.proto,
+                  }).then(() => app.refreshDenyLog());
+                }
+                app.setTab("verify");
               }}
             />
           ) : null}

@@ -10,6 +10,22 @@ permissions:
   contents: read
 
 jobs:
+  changelog:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Fetch comparison base
+        run: git fetch --no-tags origin "${{ github.base_ref || 'main' }}":"refs/remotes/origin/${{ github.base_ref || 'main' }}"
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Changelog trail
+        env:
+          CHANGELOG_BASE: ${{ github.base_ref && format('origin/{0}', github.base_ref) || 'origin/main' }}
+        run: make changelog-check
+
   check:
     strategy:
       fail-fast: false

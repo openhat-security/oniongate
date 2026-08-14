@@ -1,7 +1,7 @@
 {
   "name": "oniongate",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "OnionGate — isolated Tor app routing, Onion Host, and leak verification",
   "license": "GPL-3.0-only",
   "homepage": "https://irruptio-security.github.io/oniongate/",
@@ -21,6 +21,8 @@
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && cargo test --manifest-path src-tauri/Cargo.toml",
+    "changelog:sync": "node scripts/sync-release-docs.mjs",
+    "changelog:check": "node --test scripts/check-changelog.test.mjs && node scripts/check-changelog.mjs",
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets",
     "clean:rust": "cargo clean --manifest-path src-tauri/Cargo.toml",
     "fmt:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",

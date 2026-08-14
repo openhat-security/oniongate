@@ -68,11 +68,8 @@ automatically.
 ## Privileged helper
 
 On supported systems, OnionGate can install `oniongate-helper` as a root-owned
-background service. The current typed helper protocol accepts only:
-
-- a liveness check;
-- enable OnionGate's UDP/QUIC kill-switch rule;
-- disable that rule.
+background service. `make dev` starts it. See [Daemons](/guide/daemons) for the
+typed protocol, CLI, and install paths.
 
 There is deliberately no arbitrary-command request. TUN, proxy, helper
 installation/removal, and hardening actions may still use the platform's normal

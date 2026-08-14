@@ -4,9 +4,10 @@
 .PHONY: help setup install deps \
 	start dev run build build-frontend preview \
 	downloads icons \
-	check typecheck test lint fmt fmt-check audit release-check release-bundle-local sidecar-sbom \
+	check typecheck test lint fmt fmt-check audit \
+	changelog-check changelog-sync release-check release-bundle-local sidecar-sbom \
 	docs docs-build docs-preview \
-	clean clean-rust clean-deps clean-docs
+	clean clean-rust clean-deps clean-docs cleanup
 
 CARGO_MANIFEST := src-tauri/Cargo.toml
 NPM ?= npm
@@ -32,12 +33,15 @@ deps: ## Download + SHA-256-verify bundled Tor / lyrebird / sing-box
 # Develop / run
 # ---------------------------------------------------------------------------
 
-start: deps ## Start the Tauri app (development mode)
-	$(NPM) run tauri dev
+start: deps ## Start daemons, then Tauri dev (see docs/guide/daemons.md)
+	bash scripts/dev.sh
 
 dev: start ## Alias for start
 
 run: start ## Alias for start
+
+cleanup: ## Restore host network defaults after a killed session
+	bash scripts/dev-cleanup.sh
 
 preview: ## Serve the built frontend (vite preview)
 	$(NPM) run preview
@@ -64,8 +68,15 @@ icons: ## Clean logo transparency and regenerate platform icon bundles (macOS)
 # Quality
 # ---------------------------------------------------------------------------
 
-check: ## Typecheck frontend + run Rust tests
+check: changelog-check ## Typecheck frontend + run Rust tests + changelog trail
 	$(NPM) run check
+
+changelog-sync: ## Copy CHANGELOG.md into docs and write the commit-subject audit page
+	node scripts/sync-release-docs.mjs
+
+changelog-check: ## Require changelog bullets and in-sync docs pages
+	node --test scripts/check-changelog.test.mjs
+	node scripts/check-changelog.mjs
 
 typecheck: ## TypeScript check (no emit)
 	$(NPM) run typecheck
@@ -86,7 +97,7 @@ fmt-check: ## Check Rust formatting without writing
 audit: ## cargo audit against src-tauri/Cargo.lock
 	cargo audit --file src-tauri/Cargo.lock
 
-release-check: ## Validate version synchronization and CHANGELOG (VERSION=x.y.z optional)
+release-check: changelog-check ## Validate version sync, CHANGELOG, and docs trail (VERSION=x.y.z optional)
 	node scripts/check-release.mjs $(VERSION)
 
 release-bundle-local: ## Build and verify an unsigned bundle for this host

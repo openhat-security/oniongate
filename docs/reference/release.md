@@ -17,7 +17,13 @@ Review and merge that change before tagging. Release CI rejects:
 - a tag whose commit is not reachable from `main` or `staging`;
 - a tag that differs from the application version;
 - mismatched versions across package, lockfile, Cargo, or Tauri config;
-- a missing dated `CHANGELOG.md` section for that version.
+- a missing dated `CHANGELOG.md` section for that version;
+- a stale `docs/reference/changelog.md` or missing release audit page
+  (`make changelog-sync`).
+
+Every PR runs `make changelog-check`. User-visible changes must add an
+`## [Unreleased]` bullet. The docs site publishes the same changelog and a
+commit-subject [audit trail](/reference/release-audit).
 
 Cursor prepares text; a maintainer remains responsible for accuracy. AI output
 must never contain secrets, bridge lines, onion/client credentials, public IPs,

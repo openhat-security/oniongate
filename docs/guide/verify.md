@@ -23,7 +23,9 @@ not written to logs, SQLite, or exported leak reports (those reports store a
 bypass *count* only).
 
 This is a socket census, not packet capture. Short-lived flows can be missed.
-Process names come from the executable path when the OS exposes it; click the
+Repeated sockets for the same process and destination are grouped into one row
+with a count (×N). Stale TCP states such as TIME_WAIT are omitted. Process
+names come from the executable path when the OS exposes it; click the
 path to reveal it in Finder (or the platform file manager). Binaries under
 system locations (`/System`, `/usr/libexec`, Windows System32, and similar)
 are labeled **System** and are not killed.
@@ -35,10 +37,18 @@ are not using OnionGate, the app asks whether to terminate those processes and
 then request a **new identity** (Tor `NEWNYM`). That is not a restart of
 OnionGate: circuits rotate after leftover clearnet sessions are dropped.
 
-The same action is on **Verify → Connections**. It is most useful on **Not
-through Tor**. OnionGate, its Tor/transport processes, your editor/terminal,
-and core OS processes are never killed. Destinations from this census are not
-logged; the result names only processes and pids in the UI.
+The same action is on **Verify → Connections**. On **Not through Tor**, each
+process also has a **Kill** button. For a binary inside an `.app` bundle
+(ExpressVPN and similar), that stops the whole app: the GUI is asked to quit,
+matching launchd jobs are unloaded (`bootout` only — they are not disabled, so
+the app can run again after you open it or after reboot), then leftover
+processes in that bundle are stopped. A single pid that is not in an app
+bundle is stopped on its own. The dialog shows the system's stdout/stderr
+from the stop attempt. Root daemons are retried through the privileged helper,
+or an administrator prompt if the helper is not installed. OnionGate, its
+Tor/transport processes, your editor/terminal, and core OS processes are never
+killed. Destinations from this census are not logged; the result names only
+processes and pids in the UI.
 
 The CLI equivalent is `oniongate newnym --kill-clearnet`.
 

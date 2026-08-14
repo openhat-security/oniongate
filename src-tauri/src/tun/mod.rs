@@ -90,7 +90,9 @@ fn build_config(settings: &AppSettings, log_output: &str) -> serde_json::Value {
         }));
     }
 
-    rules.push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
+    if !settings.strict_tcp_lock {
+        rules.push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
+    }
 
     // Applications get no IPv6 path. This has to come after the private-address
     // rule so link-local and ULA still reach the LAN, and after the Tor exemption
@@ -138,7 +140,7 @@ fn build_config(settings: &AppSettings, log_output: &str) -> serde_json::Value {
             }
             rules.insert(0, rule);
         }
-        if settings.app_routing_policy == "only" {
+        if settings.app_routing_policy == "only" && !settings.strict_tcp_lock {
             "direct"
         } else {
             "tor-socks"
@@ -616,6 +618,25 @@ mod tests {
             "TUN needs an IPv6 prefix or IPv6 never enters the tunnel: {addresses:?}"
         );
         assert_eq!(config["dns"]["strategy"], "ipv4_only");
+    }
+
+    #[test]
+    fn nic_lock_does_not_send_private_or_unmatched_direct() {
+        let mut settings = AppSettings::default();
+        settings.strict_tcp_lock = true;
+        settings.split_tunnel = true;
+        settings.app_routing_policy = "only".into();
+        settings.route_apps = vec![crate::settings::AppIdentity {
+            id: "app".into(),
+            process_name: "Chrome".into(),
+            ..crate::settings::AppIdentity::default()
+        }];
+        let config = build_config(&settings, "/tmp/sing-box.log");
+        assert!(
+            rules(&config).iter().all(|r| r["ip_is_private"] != true),
+            "private-direct must be off while the NIC lock is on"
+        );
+        assert_eq!(config["route"]["final"], "tor-socks");
     }
 
     /// Routing Tor's own guard connections back into the tunnel hands them to

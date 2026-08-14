@@ -37,7 +37,7 @@ reversible privacy and security changes, and watch what runs at startup. See
 
 ## What it is not
 
-OnionGate is not a VPN, Tor Browser, Tails, Whonix, an antivirus, or a general
+OnionGate is not a VPN, Tor Browser, Tails, a two-machine Tor gateway, an antivirus, or a general
 application firewall. Specifically, it does **not**:
 
 - protect against browser fingerprinting — use Tor Browser for that;

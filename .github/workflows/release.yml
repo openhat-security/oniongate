@@ -96,7 +96,9 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Validate synchronized versions and changelog
-        run: node scripts/check-release.mjs "${GITHUB_REF_NAME}"
+        run: |
+          make changelog-check
+          node scripts/check-release.mjs "${GITHUB_REF_NAME}"
       - name: Extract release notes
         run: node scripts/extract-release-notes.mjs "${GITHUB_REF_NAME}" release-notes.md
       - name: Resolve signing posture

@@ -76,6 +76,12 @@ pub struct AppSettings {
     pub app_routing_policy: String,
     /// Suspend selected apps if their isolated Tor route disappears.
     pub session_guard: bool,
+    /// macOS: default-deny every outbound IP packet except Tor allowlisted endpoints.
+    pub strict_tcp_lock: bool,
+    /// Warned destination holes while the NIC lock is on (machine-wide). Session Degraded.
+    pub strict_tcp_exceptions: Vec<String>,
+    /// When the NIC lock is on, also pass RFC1918/link-local (not Maximum Isolation).
+    pub allow_lan: bool,
     /// Incrementing nonce used to rotate per-app SOCKS authentication circuits.
     pub circuit_epoch: u64,
     /// Preferred entry/middle/exit fingerprints (Classic torrc).
@@ -111,6 +117,9 @@ impl Default for AppSettings {
             route_apps: Vec::new(),
             app_routing_policy: "only".into(),
             session_guard: false,
+            strict_tcp_lock: false,
+            strict_tcp_exceptions: Vec::new(),
+            allow_lan: false,
             circuit_epoch: 0,
             entry_nodes: String::new(),
             middle_nodes: String::new(),
@@ -249,6 +258,16 @@ fn normalize(settings: &mut AppSettings) {
         .map(|app| app.process_name.clone())
         .filter(|name| !name.is_empty())
         .collect();
+    settings
+        .strict_tcp_exceptions
+        .retain(|item| crate::firewall::strict::parse_ip(item).is_ok());
+    settings
+        .strict_tcp_exceptions
+        .truncate(crate::firewall::strict::MAX_EXCEPTIONS);
+    if settings.strict_tcp_lock {
+        settings.kill_switch = true;
+        settings.remote_dns = true;
+    }
     let mut dedup = Vec::new();
     for line in settings.bridge_lines.drain(..) {
         let t = line.trim();

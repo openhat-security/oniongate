@@ -19,7 +19,12 @@ use crate::tor::process::{
 };
 
 const MAX_ROWS: usize = 2000;
+const MAX_ROWS_PER_PID: usize = 48;
 const SCAN_INTERVAL: Duration = Duration::from_secs(2);
+
+fn default_flow_count() -> u32 {
+    1
+}
 
 /// TUN address block from `tun/mod.rs` (`172.19.0.1/30`).
 const TUN_V4_NET: Ipv4Addr = Ipv4Addr::new(172, 19, 0, 0);
@@ -63,6 +68,9 @@ pub struct EgressFlow {
     pub path: String,
     pub location: String,
     pub system: bool,
+    /// Sockets collapsed into this row (same pid, proto, remote, direction).
+    #[serde(default = "default_flow_count")]
+    pub count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,6 +254,7 @@ fn scan() -> EgressWatch {
             path,
             location,
             system,
+            count: 1,
         });
     }
 
@@ -255,6 +264,8 @@ fn scan() -> EgressWatch {
             .then(a.process.cmp(&b.process))
             .then(a.remote.cmp(&b.remote))
     });
+    flows = collapse_duplicate_flows(flows);
+    flows = cap_rows_per_pid(flows);
 
     let total = through_oniongate + tor_transport + lan + local + bypass;
     let truncated = total > flows.len();
@@ -431,7 +442,7 @@ pub(crate) fn is_system_executable(path: &str) -> bool {
         || p.contains("/windows/winsxs/")
 }
 
-fn pid_executable_path(pid: u32) -> Option<String> {
+pub(crate) fn pid_executable_path(pid: u32) -> Option<String> {
     if pid <= 1 {
         return None;
     }
@@ -522,9 +533,7 @@ fn reveal_location(location: &str) -> Result<(), String> {
         let dir = if path.is_dir() {
             path
         } else {
-            path.parent()
-                .map(Path::to_path_buf)
-                .unwrap_or(path)
+            path.parent().map(Path::to_path_buf).unwrap_or(path)
         };
         let status = Command::new("xdg-open")
             .arg(&dir)
@@ -556,6 +565,69 @@ fn format_endpoint(ip: IpAddr, port: u16) -> String {
         IpAddr::V6(v6) => format!("[{v6}]:{port}"),
         IpAddr::V4(v4) => format!("{v4}:{port}"),
     }
+}
+
+fn canonicalize_ip(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(ip),
+        other => other,
+    }
+}
+
+fn skip_stale_tcp(proto: &str, state: &str) -> bool {
+    if proto != "tcp" {
+        return false;
+    }
+    let compact: String = state
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    matches!(
+        compact.as_str(),
+        "TIMEWAIT" | "CLOSED" | "CLOSEWAIT" | "FINWAIT1" | "FINWAIT2" | "CLOSING" | "LASTACK"
+    )
+}
+
+fn collapse_duplicate_flows(flows: Vec<EgressFlow>) -> Vec<EgressFlow> {
+    let mut order = Vec::new();
+    let mut by_key: HashMap<(u32, String, String, String, String), EgressFlow> = HashMap::new();
+    for flow in flows {
+        let key = (
+            flow.pid,
+            flow.proto.clone(),
+            flow.remote.clone(),
+            flow.direction.clone(),
+            flow.class.clone(),
+        );
+        if let Some(existing) = by_key.get_mut(&key) {
+            existing.count = existing.count.saturating_add(flow.count.max(1));
+            if existing.local != flow.local {
+                existing.local = "*".into();
+            }
+        } else {
+            order.push(key.clone());
+            by_key.insert(key, flow);
+        }
+    }
+    order
+        .into_iter()
+        .filter_map(|key| by_key.remove(&key))
+        .collect()
+}
+
+fn cap_rows_per_pid(flows: Vec<EgressFlow>) -> Vec<EgressFlow> {
+    let mut seen: HashMap<u32, usize> = HashMap::new();
+    let mut out = Vec::with_capacity(flows.len().min(MAX_ROWS));
+    for flow in flows {
+        let n = seen.entry(flow.pid).or_insert(0);
+        if *n >= MAX_ROWS_PER_PID {
+            continue;
+        }
+        *n += 1;
+        out.push(flow);
+    }
+    out
 }
 
 fn classify(flow: &RawFlow, allowed: &HashSet<u32>) -> FlowClass {
@@ -901,6 +973,9 @@ fn parse_lsof_line(line: &str) -> Option<RawFlow> {
     };
     let spec = parts.get(proto_idx + 1)?;
     let state = parts.get(proto_idx + 2).copied().unwrap_or("");
+    if skip_stale_tcp(proto, state) {
+        return None;
+    }
     let listen = state.contains("LISTEN") || (proto == "udp" && !spec.contains("->"));
     let (local, local_port, remote, remote_port) = parse_lsof_name(spec)?;
     Some(RawFlow {
@@ -923,12 +998,7 @@ fn parse_lsof_name(spec: &str) -> Option<(IpAddr, u16, IpAddr, u16)> {
         return Some((local, local_port, remote, remote_port));
     }
     let (local, local_port) = parse_endpoint(spec)?;
-    Some((
-        local,
-        local_port,
-        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        0,
-    ))
+    Some((local, local_port, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0))
 }
 
 fn parse_darwin_netstat(text: &str) -> Vec<RawFlow> {
@@ -958,6 +1028,9 @@ fn parse_darwin_netstat_line(line: &str) -> Option<RawFlow> {
     let (remote, remote_port) = parse_darwin_addr(parts[4])?;
     let (listen, rest_at) = if proto == "tcp" {
         let state = parts.get(5).copied().unwrap_or("");
+        if skip_stale_tcp(proto, state) {
+            return None;
+        }
         let listen = state.eq_ignore_ascii_case("LISTEN");
         (listen, 6usize)
     } else {
@@ -1024,7 +1097,7 @@ fn parse_darwin_addr(spec: &str) -> Option<(IpAddr, u16)> {
     } else {
         ip.parse().ok()?
     };
-    Some((ip, port.parse().ok()?))
+    Some((canonicalize_ip(ip), port.parse().ok()?))
 }
 
 #[cfg(any(test, target_os = "linux"))]
@@ -1060,6 +1133,9 @@ fn parse_ss_line(line: &str) -> Option<RawFlow> {
     };
     let listen = state_or_recv.eq_ignore_ascii_case("LISTEN")
         || state_or_recv.eq_ignore_ascii_case("UNCONN");
+    if skip_stale_tcp(proto, state_or_recv) {
+        return None;
+    }
     let (local, local_port) = parse_endpoint(parts[local_idx])?;
     let (remote, remote_port) = parse_endpoint(parts[local_idx + 1])?;
     let rest = parts
@@ -1116,11 +1192,15 @@ fn parse_windows_json(text: &str) -> Vec<RawFlow> {
             "tcp"
         };
         let state = item.get("state").and_then(|v| v.as_str()).unwrap_or("");
+        if skip_stale_tcp(proto, state) {
+            continue;
+        }
         let listen = state.eq_ignore_ascii_case("Listen");
         let Some(local) = item
             .get("local")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse().ok())
+            .map(canonicalize_ip)
         else {
             continue;
         };
@@ -1129,6 +1209,7 @@ fn parse_windows_json(text: &str) -> Vec<RawFlow> {
             .get("remote")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse().ok())
+            .map(canonicalize_ip)
             .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
         let remote_port = item.get("rport").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
         let path = item
@@ -1161,10 +1242,10 @@ fn parse_endpoint(spec: &str) -> Option<(IpAddr, u16)> {
     }
     if let Some(rest) = spec.strip_prefix('[') {
         let (ip, port) = rest.split_once("]:")?;
-        return Some((ip.parse().ok()?, port.parse().ok()?));
+        return Some((canonicalize_ip(ip.parse().ok()?), port.parse().ok()?));
     }
     let (ip, port) = spec.rsplit_once(':')?;
-    Some((ip.parse().ok()?, port.parse().ok()?))
+    Some((canonicalize_ip(ip.parse().ok()?), port.parse().ok()?))
 }
 
 #[cfg(test)]
@@ -1298,9 +1379,13 @@ mDNS     7  adam 4u  IPv4 0x4 0t0 UDP *:5353
     #[test]
     fn system_paths_and_app_bundles() {
         assert!(is_system_executable("/usr/libexec/apsd"));
-        assert!(is_system_executable("/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"));
+        assert!(is_system_executable(
+            "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"
+        ));
         assert!(is_system_executable(r"C:\Windows\System32\svchost.exe"));
-        assert!(!is_system_executable("/Applications/Slack.app/Contents/MacOS/Slack"));
+        assert!(!is_system_executable(
+            "/Applications/Slack.app/Contents/MacOS/Slack"
+        ));
         assert!(!is_system_executable("/usr/local/bin/node"));
         let (loc, name) = bundle_location_and_name(
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -1321,6 +1406,7 @@ mDNS     7  adam 4u  IPv4 0x4 0t0 UDP *:5353
             path: String::new(),
             location: String::new(),
             system,
+            count: 1,
         }
     }
 
@@ -1328,7 +1414,8 @@ mDNS     7  adam 4u  IPv4 0x4 0t0 UDP *:5353
     fn snapshot_json_includes_destination() {
         let watch = {
             let mut w = EgressWatch::idle("t");
-            w.flows.push(sample_flow("Slack", 1, "clearnet", "8.8.8.8:443", false));
+            w.flows
+                .push(sample_flow("Slack", 1, "clearnet", "8.8.8.8:443", false));
             w
         };
         let json = serde_json::to_string(&watch).unwrap();
@@ -1353,5 +1440,75 @@ mDNS     7  adam 4u  IPv4 0x4 0t0 UDP *:5353
         let apsd = procs.iter().find(|p| p.process == "apsd").unwrap();
         assert!(apsd.system);
         assert!(!apsd.killable);
+    }
+
+    #[test]
+    fn stale_tcp_states_are_dropped() {
+        assert!(skip_stale_tcp("tcp", "(TIME_WAIT)"));
+        assert!(skip_stale_tcp("tcp", "TimeWait"));
+        assert!(skip_stale_tcp("tcp", "CLOSE_WAIT"));
+        assert!(!skip_stale_tcp("tcp", "(ESTABLISHED)"));
+        assert!(!skip_stale_tcp("tcp", "SYN_SENT"));
+        assert!(!skip_stale_tcp("udp", "TIME_WAIT"));
+        let text = "\
+COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+apsd     520 adam 12u IPv4 0x1 0t0 TCP 192.168.1.5:49152->17.57.144.11:5223 (ESTABLISHED)
+apsd     520 adam 13u IPv4 0x2 0t0 TCP 192.168.1.5:49153->17.57.144.11:5223 (TIME_WAIT)
+apsd     520 adam 14u IPv4 0x3 0t0 TCP 192.168.1.5:49154->17.57.144.11:5223 (CLOSE_WAIT)
+";
+        let rows = parse_lsof(text);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].pid, 520);
+        assert_eq!(rows[0].local_port, 49152);
+    }
+
+    #[test]
+    fn ipv4_mapped_addresses_canonicalize() {
+        let mapped: IpAddr = "::ffff:8.8.8.8".parse().unwrap();
+        assert_eq!(
+            canonicalize_ip(mapped),
+            "8.8.8.8".parse::<IpAddr>().unwrap()
+        );
+        let text = "\
+COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+apsd 520 adam 12u IPv6 0x1 0t0 TCP [::ffff:192.168.1.5]:49152->[::ffff:8.8.8.8]:443 (ESTABLISHED)
+";
+        let rows = parse_lsof(text);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].local, "192.168.1.5".parse::<IpAddr>().unwrap());
+        assert_eq!(rows[0].remote, "8.8.8.8".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn collapse_same_pid_and_destination() {
+        let mut a = sample_flow("apsd", 520, "clearnet", "17.57.144.11:5223", true);
+        a.local = "192.168.1.5:1000".into();
+        let mut b = sample_flow("apsd", 520, "clearnet", "17.57.144.11:5223", true);
+        b.local = "192.168.1.5:1001".into();
+        let mut c = sample_flow("apsd", 520, "clearnet", "1.1.1.1:443", true);
+        c.local = "192.168.1.5:1002".into();
+        let collapsed = collapse_duplicate_flows(vec![a, b, c]);
+        assert_eq!(collapsed.len(), 2);
+        let apple = collapsed
+            .iter()
+            .find(|f| f.remote == "17.57.144.11:5223")
+            .unwrap();
+        assert_eq!(apple.count, 2);
+        assert_eq!(apple.local, "*");
+        let other = collapsed
+            .iter()
+            .find(|f| f.remote == "1.1.1.1:443")
+            .unwrap();
+        assert_eq!(other.count, 1);
+    }
+
+    #[test]
+    fn cap_prevents_one_pid_from_filling_the_table() {
+        let flows: Vec<EgressFlow> = (0..80)
+            .map(|i| sample_flow("apsd", 520, "clearnet", &format!("203.0.113.{i}:443"), true))
+            .collect();
+        let capped = cap_rows_per_pid(flows);
+        assert_eq!(capped.len(), MAX_ROWS_PER_PID);
+        assert!(capped.iter().all(|f| f.pid == 520));
     }
 }

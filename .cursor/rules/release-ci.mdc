@@ -14,8 +14,10 @@ alwaysApply: false
   corresponding-source links. Follow the full checklist in
   `docs/reference/release.md`.
 - Before tagging, invoke the project `release-changelog` skill. The release
-  commit must synchronize npm/Cargo/Tauri versions and contain a dated
-  `CHANGELOG.md` section; CI enforces both.
+  commit must synchronize npm/Cargo/Tauri versions, contain a dated
+  `CHANGELOG.md` section, and keep `docs/reference/changelog.md` plus
+  `docs/reference/release-audit.md` in sync (`make changelog-sync`). CI runs
+  `make changelog-check` on every PR and `check-release.mjs` on the tag.
 - Release tags must point to commits reachable from `main` or `staging`.
   Staging-origin releases are always prereleases; feature branches never build
   downloadable artifacts.

@@ -13,6 +13,17 @@ use crate::snowflake;
 use crate::tor::{self, CONTROL_PORT, DNS_PORT, SOCKS_PORT};
 use crate::tun;
 
+/// How teardown should treat the transition lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TeardownMode {
+    /// Disconnect while the app stays running: lock clearnet first so apps
+    /// cannot race onto the WAN while TUN/proxy/Tor come down.
+    Disconnect,
+    /// Process exit, `make dev` cleanup, CLI `stop`, or Emergency Restore:
+    /// restore host network defaults. Do not arm a leftover lock.
+    RestoreHost,
+}
+
 async fn wait_ports_clear(timeout_ms: u64) -> bool {
     let steps = (timeout_ms / 150).max(1);
     for _ in 0..steps {
@@ -67,23 +78,32 @@ pub async fn teardown_session(
     managed_singbox: &AsyncMutex<Option<Child>>,
     managed_snowflake: &AsyncMutex<Option<Child>>,
     saved_proxy: &Mutex<SavedProxyState>,
+    mode: TeardownMode,
 ) -> Result<String, String> {
     let _ = crate::session::set_phase(crate::session::SessionPhase::Recovering, None);
     let mut parts = Vec::new();
     let mut errors = Vec::new();
 
-    // 0) Lock clearnet BEFORE releasing Session Guard or dropping TUN — same
-    //    posture as a VPN that blocks traffic while reconnecting/disconnecting.
-    match firewall::arm_for_transition().await {
-        Ok(msg) => {
-            logs::append(&msg);
-            parts.push(msg);
-        }
-        Err(e) => {
-            logs::append(format!("Network lock before teardown failed: {e}"));
-            errors.push(format!(
-                "Could not lock the network before teardown ({e}); continuing carefully"
-            ));
+    // Disconnect keeps fail-closed: lock clearnet before releasing Session Guard
+    // or dropping TUN. RestoreHost skips that so a killed `make dev` cannot leave
+    // the NIC lock on.
+    if mode == TeardownMode::Disconnect {
+        match firewall::arm_for_transition().await {
+            Ok(msg) => {
+                logs::append(&msg);
+                parts.push(msg);
+            }
+            Err(e) => {
+                logs::append(format!("Network lock before teardown failed: {e}"));
+                let detail = format!(
+                    "Could not lock the network before teardown ({e}); session left Degraded so apps are not released onto clearnet"
+                );
+                let _ = crate::session::set_phase(
+                    crate::session::SessionPhase::Degraded,
+                    Some(detail.clone()),
+                );
+                return Err(detail);
+            }
         }
     }
 
@@ -109,9 +129,12 @@ pub async fn teardown_session(
         }
     }
 
-    // 2) Kill switch — always clear if we left a marker
+    // 2) Kill switch / NIC lock — always flush when the helper is available so a
+    //    killed process cannot leave live pf without a journal. Without the
+    //    helper, only prompt when a marker or live rules say it is on.
     let firewall_status = firewall::status();
-    if firewall_status.active || firewall_status.marker_active {
+    if firewall_status.active || firewall_status.marker_active || crate::helper::client::available()
+    {
         match firewall::disable_kill_switch().await {
             Ok(msg) => {
                 logs::append(&msg);
@@ -195,7 +218,8 @@ pub async fn teardown_session(
     }
 
     // 9) Clear the transition lock last — only after Tor/TUN/proxy are gone so
-    //    nothing can race onto clearnet during teardown.
+    //    nothing can race onto clearnet during teardown. Always attempt: live pf
+    //    can outlive the journal after a killed process.
     match firewall::disarm_after_transition().await {
         Ok(msg) => {
             logs::append(&msg);
@@ -231,7 +255,7 @@ pub async fn teardown_session(
     }
 }
 
-/// Best-effort sync wrapper for process exit.
+/// Best-effort sync wrapper for process exit. Restores host network defaults.
 pub fn teardown_session_blocking(
     managed_tor: &AsyncMutex<Option<Child>>,
     managed_singbox: &AsyncMutex<Option<Child>>,
@@ -243,5 +267,6 @@ pub fn teardown_session_blocking(
         managed_singbox,
         managed_snowflake,
         saved_proxy,
+        TeardownMode::RestoreHost,
     ));
 }

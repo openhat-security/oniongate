@@ -13,7 +13,7 @@ OnionGate starts its own Tor process with loopback-only listeners:
 
 - SOCKS at `127.0.0.1:9050`;
 - isolated-auth SOCKS at `127.0.0.1:9060`;
-- Tor Browser SOCKS at `127.0.0.1:9150` (`IsolateSOCKSAuth`, Whonix-style);
+- Tor Browser SOCKS at `127.0.0.1:9150` (`IsolateSOCKSAuth`);
 - control ports at `127.0.0.1:9051` and `127.0.0.1:9151`;
 - DNSPort at `127.0.0.1:9053` when remote DNS is enabled.
 
@@ -141,16 +141,17 @@ clear it.
 ## Kill switch
 
 The kill switch is the **steady-state** firewall after a session is Protected.
-It blocks clearnet UDP/QUIC and IPv6 using a platform firewall rule:
+On Everyday it blocks clearnet UDP/QUIC and IPv6. On macOS, **NIC default-deny**
+(Maximum Isolation) instead drops **every** outbound IP packet except loopback,
+DHCP, and OnionGate Tor’s allowlisted endpoints. That is the control that stops
+Apple Push and other daemons from using the WAN IP.
 
-- macOS: a dedicated `pf` anchor;
-- Linux: a dedicated `nftables` table;
-- Windows: named Windows Defender Firewall rules.
+TCP fail-closed without that lock still comes from TUN `strict_route` and
+Session Guard. Proxy-only apps that ignore SOCKS can still make direct TCP
+unless the NIC lock is on.
 
-It does **not** block all direct TCP. TCP fail-closed behavior comes from TUN's
-`strict_route` and, for explicitly selected applications, Session Guard.
-Proxy-only applications that ignore SOCKS can still make direct TCP
-connections.
+See [Residual leaks](/reference/residual-leaks) for what the lock does not
+cover.
 
 When the setting is saved, Connect re-applies the firewall rule in either Proxy
 or TUN mode. A requested rule that fails prevents a Protected badge.
@@ -200,3 +201,4 @@ Windows; see [Platform support](/reference/platform-support).
 - [Route applications](/guide/apps)
 - [Verify the live boundary](/guide/verify)
 - [Threat model](/reference/threat-model)
+- [Residual leaks](/reference/residual-leaks)

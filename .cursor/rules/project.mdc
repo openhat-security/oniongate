@@ -8,7 +8,7 @@ alwaysApply: true
 Tauri 2 desktop app (React UI + Rust core) that routes selected apps through
 isolated Tor circuits, hosts temporary and permanent onion sites via Onion Host,
 and runs live routing/leak diagnostics. It is **not** a VPN, Tor Browser, Tails,
-Whonix, an antivirus, or a general application firewall.
+a two-machine Tor gateway, an antivirus, or a general application firewall.
 
 ## Non-negotiable invariants (apply everywhere)
 

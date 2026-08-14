@@ -24,13 +24,13 @@ export const PRESETS: { id: PresetId; label: string; description: string }[] = [
     id: "public-wifi",
     label: "Public Wi-Fi",
     description:
-      "System-wide TUN with a kill switch so nothing leaks around Tor on untrusted networks.",
+      "System-wide TUN plus the UDP/QUIC kill switch. On macOS, Maximum Isolation adds the NIC default-deny; this preset does not.",
   },
   {
     id: "maximum",
     label: "Maximum Isolation",
     description:
-      "TUN, kill switch, per-app circuits, and fail-closed Session Guard for selected apps.",
+      "TUN, kill switch, remote DNS, and Session Guard. The NIC default-deny is macOS-only; Linux and Windows still use the UDP/QUIC kill switch.",
   },
   {
     id: "developer",
@@ -78,6 +78,9 @@ export function presetPatch(preset: PresetId): Partial<AppSettings> {
         split_tunnel: true,
         app_routing_policy: "only",
         session_guard: true,
+        strict_tcp_lock: true,
+        allow_lan: false,
+        strict_tcp_exceptions: [],
       };
     case "developer":
       return {

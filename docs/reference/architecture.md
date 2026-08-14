@@ -16,9 +16,10 @@ operations. Tor, sing-box, and pluggable transports run as local sidecars.
    obfs4proxy, and Conjure components where bundled. Downloaded archives are
    pinned in `scripts/dependencies.sha256`.
 5. **Privileged helper** is an optional root service reached over a local Unix
-   socket or Windows named pipe. Its current request enum permits only ping and
-   fixed kill-switch enable/disable operations. It cannot accept command text,
-   paths, or caller-supplied rules.
+   socket or Windows named pipe. Its request enum is typed only: ping, kill
+   switch, transition lock, macOS deny harvest, terminate pid, and stop
+   application. It cannot accept command text, paths, or caller-supplied rules.
+   On macOS a signed helper also checks the peer's code signature.
 6. **Operating system / administrator** remains outside OnionGate's trust
    boundary. Without the helper, platform elevation mechanisms perform each
    privileged mutation.
@@ -163,10 +164,11 @@ selects the target-triple binary. Tor-runtime components such as
 `conjure-client` may instead ship under the bundled `resources/runtime/` tree;
 the transport status is authoritative for a given platform.
 
-Development excludes the privileged helper from `externalBin`. Release CI builds
-the helper for each target and merges `tauri.release.conf.json`, placing the
-helper beside the app executable so the platform bundler signs it as nested
-code.
+Development excludes the privileged helper from `externalBin`. `make dev` builds
+and starts `oniongate-helper` (see [Daemons](/guide/daemons)).
+Release CI builds the helper for each target and merges `tauri.release.conf.json`,
+placing the helper beside the app executable so the platform bundler signs it as
+nested code.
 
 The updater public key in `tauri.conf.json` is a trust root. Release signing keys
 stay outside the repository. CI serializes platform builds while merging updater

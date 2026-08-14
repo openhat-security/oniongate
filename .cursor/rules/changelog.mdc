@@ -1,0 +1,26 @@
+---
+description: Every user-visible change needs a changelog bullet and a release audit trail
+globs: CHANGELOG.md,docs/reference/changelog.md,docs/reference/release-audit.md,docs/reference/release.md,scripts/check-changelog.mjs,scripts/sync-release-docs.mjs,scripts/check-release.mjs
+alwaysApply: true
+---
+
+# Changelog and release audit trail
+
+User-facing work is not done until `CHANGELOG.md` records it. Docs and GitHub
+releases must stay in lockstep with that file.
+
+- Add a Keep a Changelog bullet under `## [Unreleased]` in the same change as
+  the behavior (Added / Changed / Fixed / Security). Do not leave a behavior
+  PR with an empty Unreleased section.
+- Never put secrets, bridge lines, onion/client keys, public IPs, local paths,
+  or full command lines in changelog text or commit subjects.
+- Before a version bump, move Unreleased into `## [x.y.z] - YYYY-MM-DD`, keep
+  an empty `## [Unreleased]` on top, and run `make changelog-sync`. That writes
+  [docs/reference/changelog.md](docs/reference/changelog.md) and the commit-subject
+  page [docs/reference/release-audit.md](docs/reference/release-audit.md).
+- `make check` and CI run `make changelog-check`. A stale generated docs page
+  or a missing trail fails the build. Do not hand-edit the generated pages.
+- GitHub release notes come from `scripts/extract-release-notes.mjs` (the dated
+  CHANGELOG section). Do not invent a second marketing changelog.
+- Releases stay alpha/prerelease until the stable gates in
+  `docs/reference/release.md` pass. Do not call a 0.x build production-ready.

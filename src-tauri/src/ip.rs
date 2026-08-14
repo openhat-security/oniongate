@@ -11,8 +11,7 @@ const POLL_IDLE: Duration = Duration::from_secs(30);
 const POLL_NEED_TOR: Duration = Duration::from_secs(5);
 const POLL_SLICE: Duration = Duration::from_secs(2);
 
-static SNAPSHOT: LazyLock<Mutex<IpReport>> =
-    LazyLock::new(|| Mutex::new(IpReport::default()));
+static SNAPSHOT: LazyLock<Mutex<IpReport>> = LazyLock::new(|| Mutex::new(IpReport::default()));
 
 #[derive(Debug, Serialize, Deserialize)]
 struct IpifyResponse {

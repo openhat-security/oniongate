@@ -147,7 +147,7 @@ fn detect_macos() -> Vec<DetectedApp> {
             "browsers",
             tor_browser_installed,
             &["firefox", "Tor Browser"],
-            "Use the OnionGate launcher so Tor Browser skips its own Tor (Whonix-style).",
+            "Use the OnionGate launcher so Tor Browser skips its own Tor.",
         ),
         map(
             "chrome",
@@ -233,7 +233,9 @@ fn detect_linux() -> Vec<DetectedApp> {
         })
     };
 
-    let tor_browser_installed = home().join("tor-browser/Browser/start-tor-browser").is_file()
+    let tor_browser_installed = home()
+        .join("tor-browser/Browser/start-tor-browser")
+        .is_file()
         || home()
             .join("tor-browser_en-US/Browser/start-tor-browser")
             .is_file()
@@ -299,7 +301,7 @@ fn detect_linux() -> Vec<DetectedApp> {
             "browsers",
             tor_browser_installed,
             &["firefox", "tor-browser"],
-            "Use the OnionGate launcher so Tor Browser skips its own Tor (Whonix-style).",
+            "Use the OnionGate launcher so Tor Browser skips its own Tor.",
         ),
         map(
             "chrome",

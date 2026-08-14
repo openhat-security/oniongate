@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub mod strict;
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
@@ -13,6 +15,7 @@ pub struct FirewallStatus {
     pub active: bool,
     pub verified_live: bool,
     pub marker_active: bool,
+    pub strict_deny_live: bool,
     pub detail: String,
 }
 
@@ -45,6 +48,7 @@ pub fn status() -> FirewallStatus {
             active: false,
             verified_live: false,
             marker_active: false,
+            strict_deny_live: false,
             detail: "Kill switch not supported on this OS".into(),
         }
     }
@@ -75,8 +79,8 @@ pub fn network_lock_status() -> NetworkLockStatus {
     }
 }
 
-/// Steady-state kill switch: block clearnet UDP/QUIC and IPv6.
-/// TCP fail-closed still relies on TUN `strict_route` / Session Guard.
+/// Steady-state kill switch: UDP/QUIC + IPv6, or the macOS default-deny NIC lock
+/// when `strict_tcp_lock` is on.
 pub async fn enable_kill_switch() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
@@ -167,10 +171,8 @@ pub async fn arm_for_transition() -> Result<String, String> {
         }
         Err(e) => {
             crate::logs::append(format!("Network lock failed: {e}"));
-            let _ = crate::session::set_phase(
-                crate::session::SessionPhase::Degraded,
-                Some(e.clone()),
-            );
+            let _ =
+                crate::session::set_phase(crate::session::SessionPhase::Degraded, Some(e.clone()));
             Err(format!(
                 "Could not lock the network before changing protection ({e}). \
                  Refusing to continue so traffic cannot leak during the transition."
@@ -183,7 +185,7 @@ pub async fn arm_for_transition() -> Result<String, String> {
 /// after a clean disconnect. Always clears the journal expectation.
 pub async fn disarm_after_transition() -> Result<String, String> {
     let status = network_lock_status();
-    if !status.active && !status.marker_active {
+    if !status.active && !status.marker_active && !crate::helper::client::available() {
         let _ = crate::session::expect_network_lock(false);
         return Ok("Network lock already clear".into());
     }
@@ -198,4 +200,68 @@ pub async fn disarm_after_transition() -> Result<String, String> {
             Err(e)
         }
     }
+}
+
+/// Reload the NIC lock when live Tor endpoints change; harvest pflog denies.
+pub fn start_strict_watchdog() {
+    std::thread::spawn(|| {
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(_) => return,
+        };
+        rt.block_on(async {
+            let mut last: Vec<String> = Vec::new();
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                let settings = crate::settings::load();
+                if !settings.strict_tcp_lock {
+                    continue;
+                }
+                let phase = crate::session::load().phase;
+                if phase != crate::session::SessionPhase::Protected
+                    && phase != crate::session::SessionPhase::Connecting
+                    && phase != crate::session::SessionPhase::Degraded
+                {
+                    continue;
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    if let Ok(denies) = macos::harvest_denies().await {
+                        let allow = crate::tor::endpoints::last_good_allowlist();
+                        crate::deny_log::ingest(&denies, &allow);
+                    }
+                    let fw = macos::status();
+                    if settings.strict_tcp_lock
+                        && phase == crate::session::SessionPhase::Protected
+                        && !fw.strict_deny_live
+                    {
+                        match enable_kill_switch().await {
+                            Ok(_) => {}
+                            Err(e) => {
+                                crate::logs::append(format!(
+                                    "NIC lock watchdog: live default-deny missing ({e})"
+                                ));
+                                let _ = crate::session::set_phase(
+                                    crate::session::SessionPhase::Degraded,
+                                    Some(
+                                        "NIC lock is on but live pf default-deny is missing".into(),
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    if let Ok(next) = crate::tor::endpoints::current_allowlist(&settings).await {
+                        let as_str: Vec<String> = next.iter().map(ToString::to_string).collect();
+                        if as_str != last && !as_str.is_empty() {
+                            last = as_str;
+                            let _ = enable_kill_switch().await;
+                        }
+                    }
+                }
+            }
+        });
+    });
 }

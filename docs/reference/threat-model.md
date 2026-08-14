@@ -32,7 +32,9 @@ OnionGate aims to:
 - Global passive traffic correlation.
 - Making unsafe application protocols anonymous.
 - Malware prevention, exploit containment, or a general endpoint-security
-  replacement.
+  product.
+- Paths listed in [Residual leaks](/reference/residual-leaks), including NECP
+  flows that never hit `pf` and the same-host Tor-endpoint allowlist hole.
 - UDP tunnelling, torrenting, streaming, gaming, or stable geolocation.
 - Protecting a local onion service that is itself vulnerable.
 - Guaranteeing that a moved, renamed, helper, or child process still matches a
@@ -126,20 +128,20 @@ the report has no failures.
 ## Privileged helper
 
 The optional helper is a root service and therefore a high-value local target.
-Its protocol is newline-delimited typed JSON over a local IPC endpoint and
-currently accepts only ping and fixed kill-switch enable/disable requests. There
-is no arbitrary command, path, or caller-supplied rule operation.
+Its protocol is newline-delimited typed JSON over a local IPC endpoint. It
+accepts only typed operations: ping, kill-switch and transition-lock
+enable/disable, macOS deny-log harvest, terminate an allowed pid, and stop an
+`.app` bundle. There is no arbitrary command, path, or caller-supplied rule
+operation.
 
-On Unix the service is configured for the installing user's UID. Windows pipe
-client authentication and signed helper packaging require independent review
-before the helper becomes part of a stable protection boundary.
+On Unix the service is configured for the installing user's UID. On macOS a
+**signed** helper also requires the peer's code signature (Team ID /
+`com.adamsiwiec.oniongate`). Unsigned debug builds stay UID-only. Windows pipe
+client authentication and splitting the helper into a minimal crate remain
+pre-stable debt.
 
-Pre-stable hardening debt remains: the helper binary links the main application
-library instead of a minimal protocol/policy crate, and macOS authenticates the
-peer by UID rather than validating an audit token and the client's code-signing
-identity. The operation set is intentionally narrow, but same-user malware can
-still request those fixed operations. Windows named-pipe ACL/client
-authentication also requires review.
+Same-user malware can still request those fixed operations against an unsigned
+debug helper. A signed release helper refuses unsigned or foreign-signed peers.
 
 ## Sensitive data
 

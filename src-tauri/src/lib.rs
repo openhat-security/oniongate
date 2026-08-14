@@ -4,11 +4,12 @@ mod cleanup;
 pub mod cli;
 mod commands;
 mod db;
+mod deny_log;
 mod deps;
 mod detect;
 mod egress_watch;
 mod elevate;
-mod firewall;
+pub mod firewall;
 mod harden;
 pub mod helper;
 mod ip;
@@ -56,6 +57,8 @@ pub fn run() {
             workstation::start_monitor();
             egress_watch::start_monitor();
             ip::start_monitor();
+            crate::firewall::start_strict_watchdog();
+            watch_termination_signals(app.handle().clone());
             Ok(())
         })
         .manage(AppState::default())
@@ -130,6 +133,7 @@ pub fn run() {
             commands::disable_proxy,
             commands::new_identity,
             commands::kill_clearnet_and_new_identity,
+            commands::kill_clearnet_process,
             commands::refresh_ips,
             commands::get_ips,
             commands::get_bypass_helpers,
@@ -150,6 +154,10 @@ pub fn run() {
             commands::get_macports_status,
             commands::open_macports_download,
             commands::get_kill_siri_status,
+            commands::get_deny_log,
+            commands::acknowledge_deny,
+            commands::add_strict_exception,
+            commands::remove_strict_exception,
             commands::get_workstation_posture,
             commands::get_persistence_report,
             commands::save_persistence_baseline,
@@ -181,4 +189,33 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+fn watch_termination_signals(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        #[cfg(unix)]
+        {
+            let mut sigterm =
+                match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+            let mut sigint =
+                match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()) {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+            tokio::select! {
+                _ = sigterm.recv() => {}
+                _ = sigint.recv() => {}
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            if tokio::signal::ctrl_c().await.is_err() {
+                return;
+            }
+        }
+        app.exit(0);
+    });
 }

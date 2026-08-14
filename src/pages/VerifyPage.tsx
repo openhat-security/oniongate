@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { ClearnetAlert } from "@/components/ClearnetAlert";
+import { KillProcessDialog } from "@/components/KillProcessDialog";
 import { ProcessIdentity } from "@/components/ProcessIdentity";
 import type { TorApp } from "@/hooks/useTorApp";
-import type { EgressFlow, IpReport } from "@/lib/types";
+import type { EgressFlow, IpReport, ProcessKillResult } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type VerifyView = "connections" | "leaks";
@@ -105,6 +106,8 @@ export function VerifyPage({ app }: { app: TorApp }) {
     verifyFlowFilter: filter,
     setVerifyFlowFilter: setFilter,
     killClearnetAndNewIdentity,
+    denyLog,
+    refreshEgressWatch,
   } = app;
   const [view, setView] = useState<VerifyView>("connections");
   const [query, setQuery] = useState("");
@@ -113,9 +116,24 @@ export function VerifyPage({ app }: { app: TorApp }) {
   const [onionHost, setOnionHost] = useState("");
   const [onionResult, setOnionResult] = useState<OnionResult | null>(null);
   const [confirmKill, setConfirmKill] = useState(false);
+  const [killTarget, setKillTarget] = useState<{
+    process: string;
+    pid: number;
+  } | null>(null);
+  const [killPending, setKillPending] = useState(false);
+  const [killResult, setKillResult] = useState<ProcessKillResult | null>(null);
 
   const clearnetProcesses = egressWatch?.clearnet_processes ?? [];
   const killableCount = clearnetProcesses.filter((item) => item.killable).length;
+  const clearnetByPid = useMemo(() => {
+    const map = new Map<number, (typeof clearnetProcesses)[number]>();
+    for (const item of clearnetProcesses) {
+      map.set(item.pid, item);
+    }
+    return map;
+  }, [clearnetProcesses]);
+  const showKill = filter === "clearnet";
+  const tableCols = showKill ? 9 : 8;
 
   const flows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -135,6 +153,32 @@ export function VerifyPage({ app }: { app: TorApp }) {
       );
     });
   }, [egressWatch?.flows, filter, query, ips]);
+
+  const killProcess = (process: string, pid: number) => {
+    setKillTarget({ process, pid });
+    setKillResult(null);
+    setKillPending(true);
+    void (async () => {
+      try {
+        const result = await invoke<ProcessKillResult>("kill_clearnet_process", {
+          pid,
+        });
+        setKillResult(result);
+        await refreshEgressWatch();
+      } catch (error) {
+        const message = typeof error === "string" ? error : String(error);
+        setKillResult({
+          process,
+          pid,
+          ok: false,
+          detail: message,
+          log: `${message}\n`,
+        });
+      } finally {
+        setKillPending(false);
+      }
+    })();
+  };
 
   return (
     <section className="flex flex-col gap-5">
@@ -181,6 +225,28 @@ export function VerifyPage({ app }: { app: TorApp }) {
             <span>Listening {egressWatch?.listen ?? 0}</span>
             <span>Total {egressWatch?.total ?? 0}</span>
           </div>
+          {(denyLog?.events.length ?? 0) > 0 ? (
+            <div className="rounded-xl border border-danger/30 bg-danger/5 p-3">
+              <div className="text-sm font-semibold">Blocked by NIC lock</div>
+              <p className="mt-1 text-xs text-muted">
+                Every deny is logged locally. Allowing a destination is a
+                machine-wide hole.
+              </p>
+              <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs">
+                {denyLog!.events.slice(0, 50).map((event) => (
+                  <li
+                    key={`${event.process}-${event.dest}-${event.port}-${event.proto}`}
+                    className="flex justify-between gap-2 font-mono"
+                  >
+                    <span className="truncate">
+                      {event.process} → {event.dest}:{event.port} {event.proto}
+                    </span>
+                    <span className="shrink-0 text-muted">×{event.count}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <Segmented
               value={filter}
@@ -241,13 +307,16 @@ export function VerifyPage({ app }: { app: TorApp }) {
                   <th className="px-3 py-2 font-semibold">Public</th>
                   <th className="px-3 py-2 font-semibold">Remote</th>
                   <th className="px-3 py-2 font-semibold">Route</th>
+                  {showKill ? (
+                    <th className="px-3 py-2 text-right font-semibold">Kill</th>
+                  ) : null}
                 </tr>
               </thead>
               <tbody>
                 {flows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={8}
+                      colSpan={tableCols}
                       className="px-3 py-8 text-center text-muted"
                     >
                       {egressWatch?.watching
@@ -258,6 +327,12 @@ export function VerifyPage({ app }: { app: TorApp }) {
                 ) : (
                   flows.map((flow, index) => {
                     const seen = publicSource(flow, ips);
+                    const census = clearnetByPid.get(flow.pid);
+                    const firstOfPid =
+                      showKill &&
+                      flows.findIndex((item) => item.pid === flow.pid) ===
+                        index;
+                    const canKill = census?.killable === true;
                     return (
                     <tr
                       key={`${flow.pid}-${flow.proto}-${flow.local}-${flow.remote}-${index}`}
@@ -276,7 +351,14 @@ export function VerifyPage({ app }: { app: TorApp }) {
                           }
                         />
                       </td>
-                      <td className="px-3 py-1.5 text-muted">{flow.pid}</td>
+                      <td className="px-3 py-1.5 text-muted">
+                        {flow.pid}
+                        {(flow.count ?? 1) > 1 ? (
+                          <span className="ml-1 text-[10px] text-muted">
+                            ×{flow.count}
+                          </span>
+                        ) : null}
+                      </td>
                       <td className="px-3 py-1.5 uppercase text-muted">
                         {flow.proto}
                       </td>
@@ -311,6 +393,32 @@ export function VerifyPage({ app }: { app: TorApp }) {
                           {classLabel(flow.class)}
                         </span>
                       </td>
+                      {showKill ? (
+                        <td className="px-3 py-1.5 text-right">
+                          {firstOfPid ? (
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              disabled={
+                                busy ||
+                                killPending ||
+                                !canKill ||
+                                (killTarget?.pid === flow.pid && killPending)
+                              }
+                              title={
+                                canKill
+                                  ? `Stop ${flow.process} (pid ${flow.pid})`
+                                  : "Protected system or OnionGate process"
+                              }
+                              onClick={() =>
+                                killProcess(flow.process, flow.pid)
+                              }
+                            >
+                              Kill
+                            </Button>
+                          ) : null}
+                        </td>
+                      ) : null}
                     </tr>
                     );
                   })
@@ -319,15 +427,31 @@ export function VerifyPage({ app }: { app: TorApp }) {
             </table>
           </div>
           <p className="text-[11px] text-muted">
-            Includes inbound, outbound, and listening sockets. Click a path to
-            reveal it on disk. System processes are labeled and are not killed.
-            Public is the address the remote service sees for that path (Tor
-            exit or WAN), from the last IP check — not this socket. Destinations
-            stay in this window only — they are not logged or saved.
+            Includes inbound, outbound, and listening sockets. Repeated sockets
+            for the same process and destination are grouped (×N). Click a path
+            to reveal it on disk. System processes are labeled and are not
+            killed. Public is the address the remote service sees for that path
+            (Tor exit or WAN), from the last IP check — not this socket.
+            Destinations stay in this window only — they are not logged or
+            saved.
             {egressWatch?.truncated
               ? " The table is capped at 2000 rows."
               : ""}
           </p>
+          {killTarget ? (
+            <KillProcessDialog
+              process={killResult?.process || killTarget.process}
+              pid={killTarget.pid}
+              pending={killPending}
+              ok={killPending ? null : (killResult?.ok ?? false)}
+              log={killResult?.log ?? ""}
+              onClose={() => {
+                if (killPending) return;
+                setKillTarget(null);
+                setKillResult(null);
+              }}
+            />
+          ) : null}
           {confirmKill ? (
             <ClearnetAlert
               processes={clearnetProcesses}

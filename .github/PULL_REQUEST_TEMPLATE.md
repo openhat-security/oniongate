@@ -14,6 +14,7 @@
 - [ ] `make check` passes (typecheck + Rust tests)
 - [ ] `make lint` passes (`cargo clippy --all-targets` and `cargo fmt --check`)
 - [ ] `make docs-build` passes
+- [ ] `CHANGELOG.md` `## [Unreleased]` has a bullet for user-visible behavior (or this PR is docs/chore-only)
 - [ ] User-visible behavior, platform limits, persisted data, network requests, CLI, and recovery docs are updated where affected
 - [ ] Network mutations stay behind a typed platform API with rollback + startup recovery
 - [ ] Added tests for torrc / control-protocol / routing / firewall / persistence changes

@@ -93,6 +93,13 @@ TUN, guarded apps, and hosted sites keep their current state. Reopen it with
 non-disconnecting behavior. Use **Quit OnionGate** from the tray menu to exit
 the process; Quit runs the same cleanup sequence before termination.
 
+`make dev` / `make start` start the [privileged helper](/guide/daemons), then
+restore host network defaults when the process exits or is interrupted
+(Ctrl+C): pf/nft kill-switch and NIC lock, TUN, system proxy, managed Tor, and
+transports. The helper stays installed. OnionGate's own settings file (bridges,
+locale, presets) is not wiped. Run `make cleanup` or `oniongate stop` if a
+killed session left the network locked.
+
 The native tray menu is available on macOS, Linux, and Windows. It shows the
 same live protection label as the app and provides:
 

@@ -24,6 +24,7 @@ import type {
   Tab,
   TorLogs,
   EgressWatch,
+  DenyLogSnapshot,
   KillClearnetIdentityResult,
 } from "@/lib/types";
 
@@ -64,6 +65,7 @@ export function useTorApp() {
     useState<IssuedCredential | null>(null);
   const [onionError, setOnionError] = useState<string | null>(null);
   const [egressWatch, setEgressWatch] = useState<EgressWatch | null>(null);
+  const [denyLog, setDenyLog] = useState<DenyLogSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -110,6 +112,14 @@ export function useTorApp() {
 
   const refreshEgressWatch = useCallback(async () => {
     setEgressWatch(await invoke<EgressWatch>("get_egress_watch"));
+  }, []);
+
+  const refreshDenyLog = useCallback(async () => {
+    try {
+      setDenyLog(await invoke<DenyLogSnapshot>("get_deny_log"));
+    } catch {
+      setDenyLog(null);
+    }
   }, []);
 
   const refreshOnionHost = useCallback(async () => {
@@ -251,11 +261,13 @@ export function useTorApp() {
   useEffect(() => {
     if (!torOn && tab !== "verify") return;
     void refreshEgressWatch();
+    void refreshDenyLog();
     const id = window.setInterval(() => {
       void refreshEgressWatch();
+      void refreshDenyLog();
     }, 2000);
     return () => window.clearInterval(id);
-  }, [torOn, tab, refreshEgressWatch]);
+  }, [torOn, tab, refreshEgressWatch, refreshDenyLog]);
 
   useEffect(() => {
     void refreshSession();
@@ -278,6 +290,13 @@ export function useTorApp() {
     const firewallReady =
       !status?.kill_switch ||
       (!!status?.firewall.active && !!status?.firewall.verified_live);
+    if (
+      settings?.strict_tcp_lock &&
+      (!status?.firewall.strict_deny_live ||
+        (settings.strict_tcp_exceptions?.length ?? 0) > 0)
+    ) {
+      return "Degraded";
+    }
 
     if (tunOn) {
       return controlReady && dnsReady && firewallReady
@@ -302,8 +321,11 @@ export function useTorApp() {
     status?.kill_switch,
     status?.firewall.active,
     status?.firewall.verified_live,
+    status?.firewall.strict_deny_live,
     status?.network_lock?.active,
     status?.bridges_enabled,
+    settings?.strict_tcp_lock,
+    settings?.strict_tcp_exceptions,
   ]);
 
   const connectTor = () => {
@@ -604,6 +626,8 @@ export function useTorApp() {
     refreshSession,
     refreshEgressWatch,
     egressWatch,
+    denyLog,
+    refreshDenyLog,
     onionProjects,
     permanentSites,
     onionAudits,

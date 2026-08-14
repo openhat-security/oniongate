@@ -49,6 +49,7 @@ pub fn status() -> FirewallStatus {
         active,
         verified_live,
         marker_active: false,
+        strict_deny_live: false,
         detail: if active {
             "Windows Defender Firewall blocks outbound UDP and IPv6 to the Internet".into()
         } else {
@@ -58,8 +59,10 @@ pub fn status() -> FirewallStatus {
 }
 
 pub fn network_lock_status() -> NetworkLockStatus {
-    let marker_active =
-        lock_marker_path().ok().and_then(|p| fs::read_to_string(p).ok()) == Some("1".into());
+    let marker_active = lock_marker_path()
+        .ok()
+        .and_then(|p| fs::read_to_string(p).ok())
+        == Some("1".into());
     let udp = rule_enabled(LOCK_UDP);
     let active = matches!(udp, Some(true)) || marker_active;
     let verified_live = udp.is_some();
@@ -98,14 +101,16 @@ fn ks_disable_script() -> String {
 pub async fn enable() -> Result<String, String> {
     if crate::helper::client::available() {
         let via = tokio::task::spawn_blocking(|| {
-            crate::helper::client::request(&crate::helper::HelperRequest::KillSwitchEnable)
+            crate::helper::client::request(&crate::helper::HelperRequest::kill_switch_udp())
         })
         .await
         .map_err(|e| e.to_string())?;
         match via {
             Ok(resp) if resp.ok => {
                 if !status().active {
-                    return Err("Windows firewall rules were not visible after helper enable".into());
+                    return Err(
+                        "Windows firewall rules were not visible after helper enable".into(),
+                    );
                 }
                 return Ok(resp.message);
             }
@@ -152,9 +157,9 @@ pub async fn enable_network_lock() -> Result<String, String> {
     if crate::helper::client::available() {
         let path_for_helper = tor_path.clone();
         let via = tokio::task::spawn_blocking(move || {
-            crate::helper::client::request(&crate::helper::HelperRequest::NetworkLockEnable {
-                tor_path: path_for_helper,
-            })
+            crate::helper::client::request(&crate::helper::HelperRequest::network_lock(
+                path_for_helper,
+            ))
         })
         .await
         .map_err(|e| e.to_string())?;

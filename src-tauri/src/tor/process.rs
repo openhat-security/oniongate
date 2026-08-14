@@ -12,7 +12,7 @@ pub const SOCKS_HOST: &str = "127.0.0.1";
 pub const SOCKS_PORT: u16 = 9050;
 pub const ISOLATED_SOCKS_PORT: u16 = 9060;
 /// Tor Browser's default SOCKS port. Bound with IsolateSOCKSAuth so TB keeps
-/// per-first-party stream isolation when it uses OnionGate's Tor (Whonix-style).
+/// per-first-party stream isolation when it uses OnionGate's Tor.
 pub const BROWSER_SOCKS_PORT: u16 = 9150;
 pub const CONTROL_PORT: u16 = 9051;
 /// Tor Browser's default control port (same cookie as CONTROL_PORT).
@@ -21,7 +21,9 @@ pub const DNS_PORT: u16 = 9053;
 
 /// Path to the managed Tor control cookie (for Tor Browser / external controllers).
 pub fn control_cookie_path() -> Result<PathBuf, String> {
-    Ok(ensure_data_dir()?.join("tor-data").join("control_auth_cookie"))
+    Ok(ensure_data_dir()?
+        .join("tor-data")
+        .join("control_auth_cookie"))
 }
 
 fn host_triple() -> &'static str {
@@ -413,6 +415,10 @@ fn write_managed_torrc(app_dir: &Path) -> Result<PathBuf, String> {
     // only point at them.
     extra.push_str(&crate::onion_service::persistent::torrc_block());
 
+    if settings.strict_tcp_lock {
+        extra.push_str("ClientUseIPv6 0\n");
+    }
+
     let contents = format!(
         "\
 SocksPort {SOCKS_HOST}:{SOCKS_PORT}
@@ -694,7 +700,9 @@ mod tests {
         let torrc = write_managed_torrc(&app_dir).expect("write torrc");
         let text = fs::read_to_string(&torrc).expect("read torrc");
         assert!(
-            text.contains(&format!("SocksPort {SOCKS_HOST}:{BROWSER_SOCKS_PORT} IsolateSOCKSAuth")),
+            text.contains(&format!(
+                "SocksPort {SOCKS_HOST}:{BROWSER_SOCKS_PORT} IsolateSOCKSAuth"
+            )),
             "Tor Browser SOCKS must keep IsolateSOCKSAuth: {text}"
         );
         assert!(

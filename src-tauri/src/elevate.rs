@@ -85,6 +85,87 @@ pub fn run_shell_with_prompt(script: &str, prompt: &str) -> Result<(), String> {
     }
 }
 
+/// Like [`run_shell_with_prompt`], but returns stdout and stderr for the UI.
+pub fn run_shell_captured(script: &str, prompt: &str) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("osascript")
+            .arg("-e")
+            .arg(format!(
+                "do shell script \"{}\" with prompt \"{}\" with administrator privileges",
+                apple_script_escape(script),
+                apple_script_escape(prompt),
+            ))
+            .output()
+            .map_err(|e| format!("osascript failed: {e}"))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut combined = String::new();
+        if !stdout.trim().is_empty() {
+            combined.push_str(stdout.trim());
+        }
+        if !stderr.trim().is_empty() {
+            if !combined.is_empty() {
+                combined.push('\n');
+            }
+            combined.push_str(stderr.trim());
+        }
+        if output.status.success() {
+            return Ok(combined);
+        }
+        if stderr.contains("-128") || stderr.contains("User canceled") {
+            return Err(
+                "Administrator prompt was cancelled. Choose OK and enter your password (or use Touch ID) to apply this change."
+                    .into(),
+            );
+        }
+        Err(if combined.is_empty() {
+            "Administrator authorization failed".into()
+        } else {
+            combined
+        })
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = prompt;
+        let output = if which::which("pkexec").is_ok() {
+            Command::new("pkexec")
+                .args(["bash", "-c", script])
+                .output()
+                .map_err(|e| format!("pkexec failed: {e}"))?
+        } else {
+            Command::new("sudo")
+                .args(["bash", "-c", script])
+                .output()
+                .map_err(|e| format!("sudo failed: {e}"))?
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut combined = String::new();
+        if !stdout.trim().is_empty() {
+            combined.push_str(stdout.trim());
+        }
+        if !stderr.trim().is_empty() {
+            if !combined.is_empty() {
+                combined.push('\n');
+            }
+            combined.push_str(stderr.trim());
+        }
+        if output.status.success() {
+            Ok(combined)
+        } else if combined.is_empty() {
+            Err("Administrator authorization failed or was cancelled".into())
+        } else {
+            Err(combined)
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (script, prompt);
+        Err("Elevated shell writes are not supported on this platform".into())
+    }
+}
+
 pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }

@@ -7,6 +7,38 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-13
+
+### Added
+
+- macOS NIC default-deny lock (Maximum Isolation) with a local deny journal and
+  destination-exception consent (`LEAK`).
+- Verify **Kill** stops an `.app` bundle (quit GUI, `launchctl bootout`, leftover
+  pids), not a single pid.
+- `make dev` builds and starts `oniongate-helper`. CLI: `oniongate helper
+  status|start|stop`.
+- Docs changelog page and commit-subject release audit trail, enforced by
+  `make changelog-check` on every PR.
+
+### Security
+
+- CLI `start` no longer reports Protected; managed Tor only leaves the session
+  Degraded.
+- Disconnect aborts if the transition lock cannot arm, instead of dropping
+  TUN/proxy onto clearnet.
+- Tray Protected label matches the window (live NIC lock and no destination
+  exceptions).
+- Signed macOS helper requires a matching peer code signature; unsigned debug
+  builds stay UID-only.
+- Preset copy no longer claims a NIC lock on Linux/Windows.
+- Product and docs label this line as alpha.
+
+### Known limitations
+
+- This is an unsigned 0.x alpha. The NIC default-deny is macOS-only. CLI start
+  does not apply TUN, kill switch, or proxy. Helper crate split and Windows
+  pipe identity remain open.
+
 ## [0.2.0] - 2026-07-30
 
 ### Added
