@@ -18,4 +18,4 @@ command lines into commit subjects.
 
 Range: `v0.2.2..HEAD`.
 
-- (no commits in this range)
+- `c7e6fdc Prepare 0.2.3: generate the npm SBOM from the lockfile so Actions can publish.`
