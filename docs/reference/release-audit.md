@@ -18,4 +18,5 @@ command lines into commit subjects.
 
 Range: `v0.2.0..HEAD`.
 
+- `1bd9abf Prepare 0.2.1 alpha: NIC lock, fail-closed honesty, and changelog trail.`
 - `93c2e27 security enhancements + harderning + tor vs. not tor process monitor + ui cleanup + resilience`
