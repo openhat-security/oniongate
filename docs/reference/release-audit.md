@@ -18,4 +18,4 @@ command lines into commit subjects.
 
 Range: `v0.2.1..HEAD`.
 
-- (no commits in this range)
+- `e931b8d Prepare 0.2.2: rustfmt so Actions can ship the four-platform release.`
