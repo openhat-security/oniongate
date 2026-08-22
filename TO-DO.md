@@ -13,5 +13,9 @@ that lock; they are tracked work.
   already require a matching peer code signature; unsigned debug stays UID-only.
   Windows named-pipe ACL / client identity still needs review.
 - Snowflake / meek vs the NIC lock: no honest IP allowlist; leave unsupported.
-- Do not add a Network Extension as the enforcement path (Apple daemons bypass
-  it; it can fail open).
+- Network Extension is allowed only as a **supplement** to pf/TUN. It is
+  forbidden as the only lock. Apple can hide processes from
+  `NEFilterDataProvider` and the framework can fail open; detect that and
+  Degrade, never treat the filter as sufficient containment. Loading the
+  extension is blocked on Apple Developer Program enrollment (which company
+  enrolls, and approval of the network-extension profile).

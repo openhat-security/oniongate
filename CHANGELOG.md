@@ -7,6 +7,16 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- macOS **connection filter** (Network Extension): LuLu-style hold-and-drop for
+  outbound flows that are not already Tor. Default verdict is drop. pf/TUN stay
+  the fail-closed lock. Apple can hide some of its own processes from the
+  filter, and a crashed or flooded filter can fail open — Connect then reports
+  Degraded, not Protected. Loading it needs a signed build with a
+  network-extension profile and approval in System Settings. This is parked
+  until Apple Developer Program enrollment is decided.
+
 ## [0.2.3] - 2026-08-14
 
 ### Fixed

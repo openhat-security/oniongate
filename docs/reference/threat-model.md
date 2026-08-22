@@ -34,7 +34,8 @@ OnionGate aims to:
 - Malware prevention, exploit containment, or a general endpoint-security
   product.
 - Paths listed in [Residual leaks](/reference/residual-leaks), including NECP
-  flows that never hit `pf` and the same-host Tor-endpoint allowlist hole.
+  flows that never hit `pf`, Apple processes hidden from a Network Extension,
+  and the same-host Tor-endpoint allowlist hole.
 - UDP tunnelling, torrenting, streaming, gaming, or stable geolocation.
 - Protecting a local onion service that is itself vulnerable.
 - Guaranteeing that a moved, renamed, helper, or child process still matches a
@@ -62,6 +63,17 @@ boundary. Under **Only selected via Tor**, unmatched applications are also
 deliberately direct. Under **All except selected**, selected applications are
 deliberately direct and the Tor-routed remainder shares a default isolation
 context.
+
+### Connection filter (macOS Network Extension)
+
+The optional filter is a LuLu-style `NEFilterDataProvider`. It holds and
+drops outbound flows that are not already loopback, DHCP, TUN, or a live Tor
+endpoint. It is **not** the enforcement path. `pf` and TUN remain the
+fail-closed lock. The provider’s default verdict is drop. Apple can hide
+processes from the extension and can fail open when the framework floods or
+the extension crashes; that marks the session Degraded. Loading it is blocked
+on Apple Developer Program enrollment. There is no persistent “allow this app
+on clearnet” rule.
 
 ### Session Guard
 

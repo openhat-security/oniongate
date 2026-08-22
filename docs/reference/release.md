@@ -120,6 +120,15 @@ the private key or password.
 
 These are optional for `0.x` and mandatory from `1.0.0` onward.
 
+The optional macOS **connection filter** is a Network System Extension
+(`content-filter-provider-systemextension`). It will not load on unsigned or
+ad-hoc Debug the way the privileged helper can. Shipping it needs an Apple
+Developer ID **network-extension** provisioning profile, the host-app
+entitlements in `scripts/macos-pkg/OnionGate.entitlements`, and user approval
+in System Settings → Network Extensions. Do not attach those entitlements to
+unsigned `tauri.conf.json` builds: they would fail to launch. This PR is
+parked until Developer Program enrollment is decided.
+
 macOS requires:
 
 - `APPLE_CERTIFICATE`

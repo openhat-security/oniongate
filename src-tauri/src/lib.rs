@@ -14,6 +14,7 @@ mod harden;
 pub mod helper;
 mod ip;
 mod logs;
+mod ne_filter;
 mod onion_service;
 mod proxy;
 mod routing;
@@ -56,6 +57,7 @@ pub fn run() {
             session_guard::start_monitor();
             workstation::start_monitor();
             egress_watch::start_monitor();
+            crate::ne_filter::start_monitor();
             ip::start_monitor();
             crate::firewall::start_strict_watchdog();
             watch_termination_signals(app.handle().clone());
@@ -163,6 +165,9 @@ pub fn run() {
             commands::save_persistence_baseline,
             commands::scan_login_items,
             commands::open_full_disk_access_settings,
+            commands::get_connection_filter_status,
+            commands::activate_connection_filter,
+            commands::deactivate_connection_filter,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

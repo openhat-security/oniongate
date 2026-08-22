@@ -62,6 +62,11 @@ fn remediation_for(id: &str) -> Option<String> {
             "Remove destination exceptions on Routing. Each exception is a machine-wide hole."
         }
         "nic_lock_vpn" => "Disconnect the other VPN before using the NIC lock.",
+        "connection_filter" => {
+            "Approve the OnionGate connection filter in System Settings → Network Extensions. \
+             Apple can hide some of its own processes from this filter; that is a residual, \
+             not an Allow. pf remains the packet lock. A signed .pkg is required to load it."
+        }
         _ => return None,
     };
     Some(text.into())
@@ -271,6 +276,43 @@ pub async fn run() -> LeakReport {
         !recovery.needed,
         "Live firewall/TUN/proxy state was compared with the crash-recovery journal",
     ));
+
+    let filter = crate::ne_filter::status();
+    if filter.supported {
+        let session_live = matches!(
+            crate::session::load().phase,
+            crate::session::SessionPhase::Connecting
+                | crate::session::SessionPhase::Protected
+                | crate::session::SessionPhase::Degraded
+        );
+        checks.push(if !filter.bundled && !filter.installed {
+            warn(
+                "connection_filter",
+                "Connection filter",
+                filter.detail.clone(),
+            )
+        } else if filter.running && filter.unseen_bypass == 0 {
+            check(
+                "connection_filter",
+                "Connection filter",
+                true,
+                filter.detail.clone(),
+            )
+        } else if session_live && settings.connection_filter {
+            check(
+                "connection_filter",
+                "Connection filter",
+                false,
+                filter.detail.clone(),
+            )
+        } else {
+            warn(
+                "connection_filter",
+                "Connection filter",
+                filter.detail.clone(),
+            )
+        });
+    }
 
     let watch = crate::egress_watch::current();
     let expected_direct = settings.connection_mode != "tun"

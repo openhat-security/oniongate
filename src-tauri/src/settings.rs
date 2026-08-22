@@ -90,6 +90,9 @@ pub struct AppSettings {
     pub exit_nodes_fp: String,
     /// First-run setup wizard has been completed/dismissed.
     pub setup_complete: bool,
+    /// Require the macOS connection filter (Network Extension) once it is
+    /// installed. Unsigned builds have no extension; pf stays the lock.
+    pub connection_filter: bool,
 }
 
 impl Default for AppSettings {
@@ -125,6 +128,7 @@ impl Default for AppSettings {
             middle_nodes: String::new(),
             exit_nodes_fp: String::new(),
             setup_complete: false,
+            connection_filter: true,
         }
     }
 }

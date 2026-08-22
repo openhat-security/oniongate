@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>OnionGate Filter</string>
+  <key>CFBundleExecutable</key>
+  <string>OnionGateFilter</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.adamsiwiec.oniongate.filter</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>OnionGateFilter</string>
+  <key>CFBundlePackageType</key>
+  <string>SYSX</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.2.4</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <key>NSSystemExtensionUsageDescription</key>
+  <string>OnionGate loads this system extension to hold and drop outbound connections that are not already going through Tor. Apple can hide some of its own processes from this filter; pf remains the packet lock.</string>
+  <key>NetworkExtension</key>
+  <dict>
+    <key>NEMachServiceName</key>
+    <string>com.adamsiwiec.oniongate.filter</string>
+    <key>NEProviderClasses</key>
+    <dict>
+      <key>com.apple.networkextension.filter-data</key>
+      <string>FilterDataProvider</string>
+    </dict>
+  </dict>
+</dict>
+</plist>

@@ -64,6 +64,11 @@ firewall and stealth/auto-allow settings, Guest login and Guest SMB, Remote
 Login, AirPlay Receiver, Bonjour multicast advertisements, Remote Management,
 printer sharing, and immediate password after the screen saver.
 
+**Connection filter (Network Extension)** is a LuLu-style hold-and-drop for
+outbound flows that are not already Tor. It is a supplement. `pf` stays the
+packet lock. Apple can hide some of its own processes from the filter.
+Loading it needs a signed build and Apple Developer Program enrollment.
+
 FileVault, Intel firmware password, and private Wi-Fi address are guide-only
 controls that open the appropriate operating-system workflow rather than
 forcing a sensitive setting. Tools also include a one-shot DNS-cache flush and

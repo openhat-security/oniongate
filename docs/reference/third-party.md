@@ -17,6 +17,12 @@ The exact immutable archive hashes are in
 [`scripts/dependencies.sha256`](https://github.com/irruptio-security/oniongate/blob/main/scripts/dependencies.sha256).
 The staging script rejects unlisted or mismatched archives.
 
+## Prior art (not derived)
+
+| Upstream | License | What we used |
+| --- | --- | --- |
+| [Objective-See LuLu](https://github.com/objective-see/LuLu) | GPL-3.0 | The Apple API pattern: a `NEFilterDataProvider` that intercepts outbound flows. OnionGate’s extension, classifier, default-drop policy, and UI are original. LuLu’s tree, rule engine, and “allow Apple / allow installed programs” defaults are not vendored. |
+
 ## Notices and source
 
 The distributable notices are maintained in

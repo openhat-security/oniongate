@@ -81,6 +81,13 @@ pub async fn teardown_session(
     mode: TeardownMode,
 ) -> Result<String, String> {
     let _ = crate::session::set_phase(crate::session::SessionPhase::Recovering, None);
+    crate::ne_filter::set_session_idle();
+    if mode == TeardownMode::RestoreHost && crate::session::load().connection_filter_expected {
+        match crate::ne_filter::deactivate() {
+            Ok(msg) => logs::append(&msg),
+            Err(e) => logs::append(format!("Connection filter deactivate: {e}")),
+        }
+    }
     let mut parts = Vec::new();
     let mut errors = Vec::new();
 

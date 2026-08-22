@@ -157,6 +157,23 @@ export function SettingsPage({ app }: { app: TorApp }) {
             onCheckedChange={(v) => saveSettings({ auto_disable_proxy: v })}
           />
         </SettingRow>
+        {status?.connection_filter?.supported ? (
+          <SettingRow
+            title={
+              <span className="inline-flex items-center gap-1.5">
+                Connection filter
+                <InfoTip content="macOS Network Extension that holds and drops outbound flows that are not already Tor. pf remains the packet lock. Apple can hide some of its own processes from this filter, and a crashed or flooded filter can fail open — OnionGate then marks the session Degraded instead of Protected. A signed .pkg and an Apple Developer Program network-extension profile are required to load it. This branch is parked until that enrollment is decided." />
+              </span>
+            }
+            description="Require the hold-and-drop filter once it is installed. Unsigned debug stays on pf."
+          >
+            <Switch
+              checked={settings.connection_filter ?? true}
+              disabled={busy}
+              onCheckedChange={(v) => saveSettings({ connection_filter: v })}
+            />
+          </SettingRow>
+        ) : null}
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
