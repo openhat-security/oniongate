@@ -247,6 +247,24 @@ export function HomePage({
               Bootstrap {status.bootstrap_progress}%
             </p>
           ) : null}
+          {status?.connection_filter?.supported ? (
+            <p
+              className={cn(
+                "mt-2 max-w-xs text-[11px] leading-snug",
+                status.connection_filter.unseen_bypass > 0 ||
+                  (status.connection_filter.required &&
+                    !status.connection_filter.running)
+                  ? "text-warn-strong"
+                  : "text-muted",
+              )}
+            >
+              {status.connection_filter.running
+                ? status.connection_filter.unseen_bypass > 0
+                  ? `Filter up · ${status.connection_filter.unseen_bypass} Apple-hidden or fail-open flow(s)`
+                  : "Filter up. pf remains the packet lock."
+                : status.connection_filter.detail}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex flex-col gap-3">

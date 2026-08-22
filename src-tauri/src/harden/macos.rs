@@ -411,6 +411,8 @@ pub fn list() -> Vec<HardenItem> {
         format!("{} — active: {}", kill.detail, kill.running.join(", "))
     };
 
+    let connection_filter = crate::ne_filter::status();
+
     let loc = location_services_on();
     let loc_active = matches!(loc, Some(false));
     let loc_detail = match loc {
@@ -815,6 +817,20 @@ pub fn list() -> Vec<HardenItem> {
             "guide",
             "Prevents booting from external media on Intel Macs.",
         ),
+        {
+            let filter = &connection_filter;
+            item(
+                "connection_filter",
+                "Connection filter (Network Extension)",
+                "LuLu-style hold-and-drop for outbound flows that are not already Tor. pf stays the packet lock. Apple can hide some of its own processes from this filter.",
+                filter.installed && filter.running,
+                true,
+                &filter.detail,
+                "security",
+                "toggle",
+                "Needs a signed build with a network-extension profile and your approval in System Settings. Default verdict is drop. Allow does not punch clearnet. If the filter is installed and this setting is on, a dead or bypassed filter marks the session Degraded. Blocked on Apple Developer Program enrollment.",
+            )
+        },
         item(
             "mac_random",
             "Private Wi‑Fi address (guide)",
@@ -1384,6 +1400,14 @@ pub async fn apply(id: &str, enable: bool) -> Result<String, String> {
                 "Opened Apple guide for firmware password (set interactively; never automated)"
                     .into(),
             )
+        }
+        "connection_filter" => {
+            let _ = crate::settings::update(|s| s.connection_filter = enable);
+            if enable {
+                crate::ne_filter::activate()
+            } else {
+                crate::ne_filter::deactivate()
+            }
         }
         "mac_random" => {
             let _ = Command::new("open")

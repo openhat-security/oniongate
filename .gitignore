@@ -41,3 +41,6 @@ priuvacy-sexy.txt
 *.njsproj
 *.sln
 *.sw?
+
+# Local Swift build of the connection-filter system extension
+macos/OnionGateFilter/build/

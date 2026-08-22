@@ -58,6 +58,7 @@ pub struct AppStatus {
     pub install_hint: String,
     pub persistence_changes: usize,
     pub session_phase: crate::session::SessionPhase,
+    pub connection_filter: crate::ne_filter::FilterStatus,
 }
 
 fn finish_protected() -> Result<(), String> {
@@ -76,6 +77,15 @@ fn finish_protected() -> Result<(), String> {
                 Some("NIC lock has destination exceptions (machine-wide leak)".into()),
             );
         }
+    }
+    let filter = crate::ne_filter::status();
+    if let Err(e) = crate::ne_filter::protect_gate(
+        filter.bundled || filter.installed,
+        filter.running,
+        filter.unseen_bypass,
+        settings.connection_filter,
+    ) {
+        return crate::session::set_phase(crate::session::SessionPhase::Degraded, Some(e));
     }
     crate::session::set_phase(crate::session::SessionPhase::Protected, None)
 }
@@ -124,6 +134,7 @@ pub async fn get_status() -> AppStatus {
         install_hint: install_hint(),
         persistence_changes: crate::workstation::persistence_change_count(),
         session_phase: crate::session::load().phase,
+        connection_filter: crate::ne_filter::status(),
     }
 }
 
@@ -307,6 +318,10 @@ pub async fn start_tor(state: State<'_, AppState>) -> Result<String, String> {
         }
     }
     crate::session::begin_connect()?;
+    let filter = crate::ne_filter::status();
+    crate::session::expect_connection_filter(
+        settings.connection_filter && (filter.bundled || filter.installed),
+    )?;
     // Fail closed during the whole bootstrap/TUN/proxy bring-up window — same
     // idea as a VPN that blocks traffic while reconnecting.
     let lock_msg = crate::firewall::arm_for_transition().await?;
@@ -1025,6 +1040,21 @@ pub async fn stop_tor(state: State<'_, AppState>) -> Result<String, String> {
 #[tauri::command]
 pub fn get_recovery_status() -> crate::session::RecoveryStatus {
     crate::session::recovery_status()
+}
+
+#[tauri::command]
+pub fn get_connection_filter_status() -> crate::ne_filter::FilterStatus {
+    crate::ne_filter::status()
+}
+
+#[tauri::command]
+pub fn activate_connection_filter() -> Result<String, String> {
+    crate::ne_filter::activate()
+}
+
+#[tauri::command]
+pub fn deactivate_connection_filter() -> Result<String, String> {
+    crate::ne_filter::deactivate()
 }
 
 #[tauri::command]

@@ -99,6 +99,10 @@ pub struct ClearnetProcess {
     pub path: String,
     pub location: String,
     pub system: bool,
+    /// The Network Extension held and dropped this flow. False means the
+    /// socket was already live when the watch saw it.
+    #[serde(default)]
+    pub held: bool,
 }
 
 impl EgressWatch {
@@ -165,6 +169,7 @@ pub fn start_monitor() {
         loop {
             let watch = tokio::task::spawn_blocking(scan).await;
             if let Ok(next) = watch {
+                let _ = crate::ne_filter::reconcile_unseen(&next);
                 if let Ok(mut guard) = SNAPSHOT.lock() {
                     *guard = next;
                 }
@@ -315,6 +320,7 @@ pub fn unique_clearnet_processes(flows: &[EgressFlow]) -> Vec<ClearnetProcess> {
             path: flow.path.clone(),
             location: flow.location.clone(),
             system: flow.system,
+            held: false,
         });
     }
     out.sort_by(|a, b| a.process.cmp(&b.process).then(a.pid.cmp(&b.pid)));

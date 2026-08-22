@@ -17,6 +17,7 @@ export function ClearnetAlert({
   onReview?: () => void;
   onDismiss: () => void;
 }) {
+  const held = processes.some((item) => item.held);
   const killable = processes.filter((item) => item.killable);
   const protectedCount = processes.length - killable.length;
 
@@ -32,13 +33,12 @@ export function ClearnetAlert({
           id="clearnet-alert-title"
           className="text-base font-semibold tracking-tight"
         >
-          Processes not through Tor
+          {held ? "Connections stopped" : "Processes not through Tor"}
         </h2>
         <p className="mt-2 text-sm text-muted">
-          These processes currently have public Internet sockets that are not
-          using OnionGate. Killing them, then requesting a new identity,
-          drops leftover sessions before circuits rotate. OnionGate, Tor, and
-          core system processes are left running.
+          {held
+            ? "The connection filter held and dropped these outbound flows. They were not allowed onto clearnet. Killing the process stops it from retrying."
+            : "These processes currently have public Internet sockets that are not using OnionGate. Killing them, then requesting a new identity, drops leftover sessions before circuits rotate. OnionGate, Tor, and core system processes are left running."}
         </p>
         <ul className="mt-3 max-h-48 overflow-y-auto rounded-xl border border-line bg-panel-2 px-3 py-2 text-sm">
           {processes.map((item) => (

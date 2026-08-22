@@ -26,6 +26,7 @@ pub struct SessionJournal {
     pub tun_expected: bool,
     pub firewall_expected: bool,
     pub network_lock_expected: bool,
+    pub connection_filter_expected: bool,
     pub tor_expected: bool,
     pub active_transports: Vec<String>,
     pub last_error: Option<String>,
@@ -93,6 +94,7 @@ pub fn begin_connect() -> Result<(), String> {
         j.owner_pid = std::process::id();
         j.last_error = None;
     })?;
+    crate::ne_filter::publish_allowlist();
     Ok(())
 }
 
@@ -116,6 +118,11 @@ pub fn expect_firewall(expected: bool) -> Result<(), String> {
 
 pub fn expect_network_lock(expected: bool) -> Result<(), String> {
     update(|j| j.network_lock_expected = expected)?;
+    Ok(())
+}
+
+pub fn expect_connection_filter(expected: bool) -> Result<(), String> {
+    update(|j| j.connection_filter_expected = expected)?;
     Ok(())
 }
 
@@ -148,6 +155,7 @@ pub fn recovery_status() -> RecoveryStatus {
         || journal.tun_expected
         || journal.firewall_expected
         || journal.network_lock_expected
+        || journal.connection_filter_expected
         || journal.tor_expected;
     let live_dirty = proxy_live || tun_live || firewall_live || network_lock_live || tor_live;
     let interrupted =

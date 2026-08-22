@@ -166,6 +166,24 @@ later live inspection is unavailable, the badge remains **unverified**. TUN may
 remain active to avoid dropping captured traffic onto a direct route; retry the
 kill switch or disconnect.
 
+## Connection filter (macOS)
+
+On a signed macOS build, Harden can load a Network Extension that intercepts
+new outbound flows, allows only traffic that is already Tor or OnionGate, and
+drops everything else.
+
+This is a supplement, not a replacement for `pf` or TUN. Apple can hide some
+of its own processes from the filter, and a crashed or flooded extension can
+fail open. Home and Verify show when the filter is up and when a live
+clearnet flow never reached it. That case is **Degraded**, not Protected.
+
+Unsigned and ad-hoc debug builds do not load the extension. They stay on the
+packet lock and the after-the-fact socket watch. This feature is parked until
+Apple Developer Program enrollment is decided (which company enrolls, and
+approval of the network-extension profile).
+
+There is no “Allow this app on clearnet.” That would be a destination hole.
+
 ## Exit country and relay pins
 
 An exit-country selection writes Tor's `ExitNodes` preference. It is a

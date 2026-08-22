@@ -48,6 +48,14 @@ recorded in the recovery journal.
 - **Language:** English is currently the only selectable complete translation.
   Other listed languages remain disabled until their UI coverage is complete.
 
+## Connection filter
+
+**Connection filter** (macOS) requires the Network Extension once it is
+installed. Default is on. The extension holds and drops outbound flows that
+are not already Tor. `pf` remains the packet lock. A signed `.pkg` with a
+network-extension provisioning profile is required to load it. This setting
+is parked until Apple Developer Program enrollment is decided.
+
 ## Snowflake volunteer
 
 The Snowflake volunteer control runs a proxy that helps other censored users

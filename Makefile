@@ -3,7 +3,7 @@
 
 .PHONY: help setup install deps \
 	start dev run build build-frontend preview \
-	downloads icons \
+	downloads macos-filter icons \
 	check typecheck test lint fmt fmt-check audit \
 	changelog-check changelog-sync release-check release-bundle-local sidecar-sbom \
 	docs docs-build docs-preview \
@@ -50,8 +50,17 @@ preview: ## Serve the built frontend (vite preview)
 # Build
 # ---------------------------------------------------------------------------
 
+macos-filter: ## Compile the macOS connection-filter system extension (needs Xcode + a Developer ID profile to load)
+	$(MAKE) -C macos/OnionGateFilter
+
 build: deps ## Build a release app bundle (Tauri)
 	$(NPM) run tauri build
+	@if [ "$$(uname -s)" = Darwin ]; then \
+		$(MAKE) macos-filter || true; \
+		for app in src-tauri/target/release/bundle/macos/*.app; do \
+			[ -d "$$app" ] && bash scripts/embed-oniongate-filter.sh "$$app" || true; \
+		done; \
+	fi
 
 downloads: release-bundle-local ## Build local installer/download files for this OS
 
