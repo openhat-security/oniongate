@@ -18,6 +18,9 @@ command lines into commit subjects.
 
 Range: `v0.2.3..HEAD`.
 
+- `59735ab fix: rustfmt so Actions can ship the 0.2.4 release`
+- `d350289 docs: note Tor expert bundle 15.0.20 in third-party reference`
+- `0ead253 fix: pin Tor expert bundle to 15.0.20 for release downloads`
 - `600ba0c Merge pull request #2 from openhat-security/release/0.2.4`
 - `54743bb chore: prepare 0.2.4 release`
 - `01c3222 chore(ci): align issue templates and release workflows with openhat-security`
