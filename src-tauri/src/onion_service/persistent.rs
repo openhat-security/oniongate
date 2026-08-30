@@ -67,10 +67,7 @@ struct Registry {
 }
 
 fn base_dir() -> Result<PathBuf, String> {
-    let base = dirs::data_local_dir()
-        .ok_or_else(|| "Could not resolve local data directory".to_string())?
-        .join("tor-socks-gui");
-    fs::create_dir_all(&base).map_err(|e| format!("Failed to create data dir: {e}"))?;
+    let base = crate::paths::data_dir()?;
     restrict(&base)?;
     Ok(base)
 }

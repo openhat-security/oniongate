@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!--
+  productbuild distribution for the OnionGate macOS installer.
+
+  __HOST_ARCHITECTURES__ and __VERSION__ are substituted by
+  scripts/build-macos-pkg.sh for the architecture and version being built.
+
+  The install location is pinned: `customize="never"` hides the Customize
+  button and a local-system-only domain removes the "Change Install Location"
+  pane, so the payload can only land in /Applications. The postinstall script
+  installs the privileged helper at fixed system paths, which are meaningful
+  only on the boot volume.
+
+  The 10.15 minimum is Tauri 2's own requirement. The bundle still carries
+  Tauri's default LSMinimumSystemVersion of 10.13 because tauri.conf.json sets
+  no bundle.macOS.minimumSystemVersion; refusing to install on a release the
+  app cannot run on is the better failure.
+-->
+<installer-gui-script minSpecVersion="2">
+    <title>OnionGate</title>
+    <organization>com.adamsiwiec</organization>
+    <options customize="never" require-scripts="true" hostArchitectures="__HOST_ARCHITECTURES__"/>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="10.15"/>
+        </allowed-os-versions>
+    </volume-check>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <license file="LICENSE.txt" mime-type="text/plain"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.adamsiwiec.oniongate"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="com.adamsiwiec.oniongate" visible="false">
+        <pkg-ref id="com.adamsiwiec.oniongate"/>
+    </choice>
+    <pkg-ref id="com.adamsiwiec.oniongate" version="__VERSION__" onConclusion="none">OnionGate.pkg</pkg-ref>
+</installer-gui-script>

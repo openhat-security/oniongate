@@ -7,15 +7,21 @@ cd "$ROOT"
 target="$(rustc -vV | awk '/^host:/{print $2}')"
 extension=""
 if [[ "$target" == *windows* ]]; then extension=".exe"; fi
-case "$target" in
-  *apple-darwin) bundles="app,dmg" ;;
-  *windows*) bundles="nsis" ;;
-  *linux*) bundles="appimage,deb,rpm" ;;
-  *)
-    echo "Unsupported release host: $target" >&2
-    exit 1
-    ;;
-esac
+# BUNDLES=app skips the macOS DMG. create-dmg / hdiutil often fail in a
+# local terminal and the .pkg does not need that image.
+if [[ -z "${BUNDLES:-}" ]]; then
+  case "$target" in
+    *apple-darwin) bundles="app,dmg" ;;
+    *windows*) bundles="nsis" ;;
+    *linux*) bundles="appimage,deb,rpm" ;;
+    *)
+      echo "Unsupported release host: $target" >&2
+      exit 1
+      ;;
+  esac
+else
+  bundles="$BUNDLES"
+fi
 
 echo "==> Building unsigned local release bundle for $target"
 npm run deps
@@ -40,12 +46,19 @@ CI=true npm run tauri -- build \
 if [[ "$target" == *apple-darwin ]]; then
   app_bundle="$(printf '%s\n' src-tauri/target/"$target"/release/bundle/macos/*.app | head -n 1)"
   test -x "$app_bundle/Contents/MacOS/oniongate-helper"
-  test -x "$app_bundle/Contents/MacOS/oniongate"
+  test -x "$app_bundle/Contents/MacOS/OnionGate"
+  # `oniongate` is not a second file on macOS: APFS treats it as OnionGate.
+  # The CLI cargo bin is oniongate-cli so it cannot overwrite the GUI.
+
+  # Tauri has no pkg target, so the installer is a post-bundle step. Keep this
+  # in step with the release workflow so `make downloads` matches CI.
+  bash scripts/build-macos-pkg.sh --app "$app_bundle" --target "$target"
 fi
 
 echo "==> Local release bundle verified (unsigned)"
 case "$target" in
   *apple-darwin)
+    printf '    PKG: %s\n' src-tauri/target/"$target"/release/bundle/pkg/*.pkg
     printf '    DMG: %s\n' src-tauri/target/"$target"/release/bundle/dmg/*.dmg
     ;;
   *windows*)

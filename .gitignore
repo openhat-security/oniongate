@@ -31,6 +31,11 @@ src-tauri/resources/runtime/
 # Local research artifact (privacy.sexy dump) — clean-room reference only, not shipped
 priuvacy-sexy.txt
 
+# Local clones of upstream reference repositories (e.g. term7's macOS hardening
+# scripts). Reference only — never redistribute them from this tree, where they
+# would ship without their own copyright and license notices.
+vendors/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -41,3 +46,6 @@ priuvacy-sexy.txt
 *.njsproj
 *.sln
 *.sw?
+
+# Local Swift build of the connection-filter system extension
+macos/OnionGateFilter/build/

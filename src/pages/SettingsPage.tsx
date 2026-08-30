@@ -12,6 +12,10 @@ import type { TorApp } from "@/hooks/useTorApp";
 import type { AppSettings } from "@/lib/types";
 import { PRESETS, presetPatch, detectPreset, type PresetId } from "@/lib/presets";
 import { StrictLockConsent } from "@/components/DenyAlert";
+import { ProjectLink } from "@/components/ProjectLink";
+import { UninstallDialog } from "@/components/UninstallDialog";
+import { useAppVersion } from "@/hooks/useAppVersion";
+import { releaseChannel } from "@/lib/release";
 
 type HelperStatus = {
   supported: boolean;
@@ -33,6 +37,9 @@ export function SettingsPage({ app }: { app: TorApp }) {
   const [preset, setPreset] = useState<PresetId>("everyday");
   const [helper, setHelper] = useState<HelperStatus | null>(null);
   const [lockConsent, setLockConsent] = useState(false);
+  const [uninstall, setUninstall] = useState(false);
+  const version = useAppVersion();
+  const channel = releaseChannel(version);
 
   const refreshHelper = () =>
     invoke<HelperStatus>("privileged_helper_status")
@@ -75,9 +82,12 @@ export function SettingsPage({ app }: { app: TorApp }) {
       <header>
         <h2 className="text-xl font-semibold tracking-tight">Settings</h2>
         <p className="mt-1 text-sm text-muted">
-          Defaults, DNS, and optional volunteer relay. This build is alpha — not
-          a sole control for high-risk work. See the threat model and residual
-          leaks in the docs.
+          Defaults, DNS, and optional volunteer relay. This build is {channel} —
+          not a sole control for high-risk work.{" "}
+          <ProjectLink link="docs" className="text-onion hover:text-onion-hot">
+            See the docs
+          </ProjectLink>{" "}
+          for the threat model and residual leaks.
         </p>
       </header>
 
@@ -139,7 +149,7 @@ export function SettingsPage({ app }: { app: TorApp }) {
         </SettingRow>
         <SettingRow
           title="Auto-enable system proxy"
-          description="Turn on OS SOCKS when Tor starts"
+          description="Always applied in System proxy mode. When on, also apply OS SOCKS on Connect in other modes."
         >
           <Switch
             checked={settings.auto_enable_proxy}
@@ -155,6 +165,60 @@ export function SettingsPage({ app }: { app: TorApp }) {
             checked={settings.auto_disable_proxy}
             disabled={busy}
             onCheckedChange={(v) => saveSettings({ auto_disable_proxy: v })}
+          />
+        </SettingRow>
+        <SettingRow
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              Clearnet alerts
+              <InfoTip content="An always-on-top OnionGate window, not a macOS notification: notification text is routed through Apple's infrastructure, so it would leak the process name off this device." />
+            </span>
+          }
+          description="Pop up an alert when a process connects outside Tor"
+        >
+          <Switch
+            checked={settings.clearnet_alerts}
+            disabled={busy}
+            onCheckedChange={(v) => saveSettings({ clearnet_alerts: v })}
+          />
+        </SettingRow>
+        {status?.connection_filter?.supported ? (
+          <SettingRow
+            title={
+              <span className="inline-flex items-center gap-1.5">
+                Connection filter
+                <InfoTip content="macOS Network Extension that holds and drops outbound flows that are not already Tor. pf remains the packet lock. Apple can hide some of its own processes from this filter, and a crashed or flooded filter can fail open — OnionGate then marks the session Degraded instead of Protected. Only a Developer ID .pkg can load it; approve it in System Settings → General → Login Items & Extensions → Network Extensions if macOS asks. Unsigned builds never appear there. Allow does not punch clearnet." />
+              </span>
+            }
+            description="Require the hold-and-drop filter once it is installed. Unsigned debug stays on pf."
+          >
+            <Switch
+              checked={settings.connection_filter ?? true}
+              disabled={busy}
+              onCheckedChange={(v) => saveSettings({ connection_filter: v })}
+            />
+          </SettingRow>
+        ) : null}
+        <SettingRow
+          title="Connect on launch"
+          description="Start a Tor session when OnionGate opens. Recommended with Block the network at boot so a restart is not an offline brick."
+        >
+          <Switch
+            checked={settings.connect_on_launch}
+            disabled={busy}
+            onCheckedChange={(v) => saveSettings({ connect_on_launch: v })}
+          />
+        </SettingRow>
+        <SettingRow
+          title="Re-enable Wi-Fi when Protected"
+          description="Turn Wi-Fi back on once the session is Protected"
+        >
+          <Switch
+            checked={settings.wifi_off_at_boot_auto_reenable}
+            disabled={busy}
+            onCheckedChange={(v) =>
+              saveSettings({ wifi_off_at_boot_auto_reenable: v })
+            }
           />
         </SettingRow>
       </div>
@@ -383,6 +447,52 @@ export function SettingsPage({ app }: { app: TorApp }) {
         </Button>
       </div>
 
+      <div className="rounded-xl border border-line bg-panel p-4">
+        <div className="text-sm font-semibold">About</div>
+        <p className="mt-1 text-xs text-muted">
+          OnionGate{version ? ` ${version}` : ""} · {channel}
+        </p>
+        <p className="mt-2 text-xs text-muted">Copyright (C) 2026 OpenHat Security</p>
+        <p className="mt-1 text-xs text-muted">
+          OnionGate comes with ABSOLUTELY NO WARRANTY, to the extent permitted by
+          applicable law. This is free software, and you are welcome to
+          redistribute it under the terms of the GNU General Public License,
+          version 3.
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <ProjectLink link="license" className="text-onion hover:text-onion-hot">
+            View the GNU General Public License v3
+          </ProjectLink>
+          <ProjectLink link="docs" className="text-onion hover:text-onion-hot">
+            See the docs
+          </ProjectLink>
+          <ProjectLink link="github" className="text-onion hover:text-onion-hot">
+            OpenHat Security
+          </ProjectLink>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-danger/40 bg-panel p-4">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">Uninstall OnionGate</div>
+          <p className="mt-0.5 text-xs text-muted">
+            Removes the app, its privileged helper, and the host changes it made
+            (pf anchors, system SOCKS proxy, shell hooks). Asks for your
+            administrator password and keeps your data directory unless you tell
+            it otherwise. You confirm before anything runs.
+          </p>
+        </div>
+        <Button
+          size="sm"
+          variant="danger"
+          className="shrink-0"
+          disabled={busy}
+          onClick={() => setUninstall(true)}
+        >
+          Uninstall…
+        </Button>
+      </div>
+
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted">
         <span>
           SOCKS {status?.socks_host}:{status?.socks_port}
@@ -410,6 +520,9 @@ export function SettingsPage({ app }: { app: TorApp }) {
         />
       ) : null}
 
+      {uninstall ? (
+        <UninstallDialog onClose={() => setUninstall(false)} />
+      ) : null}
     </section>
   );
 }

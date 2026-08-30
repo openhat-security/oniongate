@@ -91,6 +91,18 @@ export type AppStatus = {
   install_hint: string;
   persistence_changes: number;
   session_phase: SessionPhase;
+  connection_filter: FilterStatus;
+};
+
+export type FilterStatus = {
+  supported: boolean;
+  bundled: boolean;
+  installed: boolean;
+  running: boolean;
+  required: boolean;
+  session_active: boolean;
+  unseen_bypass: number;
+  detail: string;
 };
 
 export type GeoLocation = {
@@ -198,6 +210,16 @@ export type AppSettings = {
   middle_nodes: string;
   exit_nodes_fp: string;
   setup_complete: boolean;
+  clearnet_alerts: boolean;
+  wifi_off_at_boot_auto_reenable: boolean;
+  connect_on_launch: boolean;
+  connection_filter: boolean;
+};
+
+/** An application OnionGate closed. The core keeps this ledger in memory only. */
+export type ReopenableApp = {
+  label: string;
+  path: string;
 };
 
 export type DenyEvent = {
@@ -395,6 +417,7 @@ export type ClearnetProcess = {
   path: string;
   location: string;
   system: boolean;
+  held?: boolean;
 };
 
 export type EgressWatch = {

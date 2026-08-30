@@ -62,16 +62,58 @@ and Dock recent apps.
 Security controls cover Captive Portal assistant, the macOS application
 firewall and stealth/auto-allow settings, Guest login and Guest SMB, Remote
 Login, AirPlay Receiver, Bonjour multicast advertisements, Remote Management,
-printer sharing, and immediate password after the screen saver.
+printer sharing, immediate password after the screen saver, the legacy
+cleartext servers (TFTP, Telnet, FTP), and remote printing / CUPS
+administration.
+
+**Connection filter (Network Extension)** is a LuLu-style hold-and-drop for
+outbound flows that are not already Tor. It is a supplement. `pf` stays the
+packet lock. Apple can hide some of its own processes from the filter, and
+the framework can fail open; Home and Verify report that as Degraded. A
+signed build and your approval in System Settings are required. There is no
+allow-to-clearnet rule.
+
+**Block the network at boot** is the control that closes the clearnet window
+between restarts. OnionGate does not lock the NIC at power-on by default. Until
+you Connect, every interface — Wi-Fi, Ethernet, USB LAN — can leak. This item
+installs a root LaunchDaemon that default-denies outbound IP (loopback and DHCP
+stay open) at the next boot. Connect replaces that lock with the usual
+transition policy; Emergency Restore and Uninstall flush it. Pair it with
+**Start OnionGate at login** and **Connect on launch** (Settings) so the Mac is
+not left offline. The setup wizard and the Home screen recommend this bundle if
+you want no leaks between startups.
+
+Two Wi-Fi controls are high-impact and go through the privileged helper or a
+root LaunchDaemon:
+
+- **Randomize Wi-Fi MAC address** draws a new locally-administered, unicast
+  address from the system CSPRNG through the helper and cycles the radio so the
+  card associates under it. There is no path that hands out a real vendor OUI,
+  and the address itself is never logged or shown. It **breaks captive portals
+  and 802.1X / enterprise (WPA-Enterprise, eduroam, corporate) authentication**
+  until you re-authenticate — on some networks an administrator has to clear the
+  old address first. The current connection drops, and the address resets at the
+  next reboot. It needs the privileged helper.
+- **Turn Wi-Fi off at boot** installs a root LaunchDaemon that disables the
+  Wi-Fi service before login, powers the radio down, and sets `pmset` wake
+  guards so waking from sleep does not quietly bring it back. It does **not**
+  block Ethernet or USB LAN — use **Block the network at boot** for that. Its
+  optional companion, **turn the radio back on once the session is Protected**
+  (a Settings toggle), flips Wi-Fi on again the moment OnionGate reports a
+  verified Protected session, so you are not left offline by hand. Removing the
+  item restores the recorded `pmset` values and re-enables the Wi-Fi service.
 
 FileVault, Intel firmware password, and private Wi-Fi address are guide-only
 controls that open the appropriate operating-system workflow rather than
-forcing a sensitive setting. Tools also include a one-shot DNS-cache flush and
+forcing a sensitive setting. Tools also include **Start OnionGate at login** (a
+per-user LaunchAgent, never a root daemon), a one-shot DNS-cache flush, and
 optional MacPorts detection/download.
 
-The **Kill Siri** watchdog and MacPorts are not part of OnionGate's routing
-boundary. The watchdog is an OnionGate-installed LaunchAgent; it is not a
-third-party security integration or malware detector.
+The **Kill Siri** watchdog watches an expanded set of Siri/Assistant helper
+processes and kills them by the correct per-user id. It, MacPorts, launch at
+login, and the Wi-Fi items are not part of OnionGate's routing boundary. The
+watchdog is an OnionGate-installed LaunchAgent; it is not a third-party security
+integration or malware detector.
 
 ## Startup Items
 

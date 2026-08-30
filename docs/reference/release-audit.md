@@ -14,8 +14,10 @@ not a substitute for the user-facing [changelog](/reference/changelog).
 Do not paste bridge lines, onion keys, credentials, public IPs, or full
 command lines into commit subjects.
 
-## 0.2.3
+## 0.2.4
 
-Range: `v0.2.2..HEAD`.
+Range: `v0.2.3..HEAD`.
 
-- `c7e6fdc Prepare 0.2.3: generate the npm SBOM from the lockfile so Actions can publish.`
+- `01c3222 chore(ci): align issue templates and release workflows with openhat-security`
+- `ed2c5ba docs: refresh guides and reference for the 0.2.4 features`
+- `d3c0cf3 feat: ship connection filter, boot lock, pkg installer, and fail-closed session work`

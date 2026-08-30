@@ -26,6 +26,7 @@ pub struct SessionJournal {
     pub tun_expected: bool,
     pub firewall_expected: bool,
     pub network_lock_expected: bool,
+    pub connection_filter_expected: bool,
     pub tor_expected: bool,
     pub active_transports: Vec<String>,
     pub last_error: Option<String>,
@@ -93,6 +94,7 @@ pub fn begin_connect() -> Result<(), String> {
         j.owner_pid = std::process::id();
         j.last_error = None;
     })?;
+    crate::ne_filter::publish_allowlist();
     Ok(())
 }
 
@@ -119,16 +121,31 @@ pub fn expect_network_lock(expected: bool) -> Result<(), String> {
     Ok(())
 }
 
+pub fn expect_connection_filter(expected: bool) -> Result<(), String> {
+    update(|j| j.connection_filter_expected = expected)?;
+    Ok(())
+}
+
 pub fn expect_transports(transports: Vec<String>) -> Result<(), String> {
     update(|j| j.active_transports = transports)?;
     Ok(())
 }
 
 pub fn set_phase(phase: SessionPhase, error: Option<String>) -> Result<(), String> {
+    // Detect the *transition* into Protected (only read the previous phase when
+    // we are about to enter it, so an ordinary set_phase does no extra IO). The
+    // single choke point for every phase change — GUI and CLI both route here —
+    // is the right home for the Wi-Fi auto re-enable, instead of a background
+    // poller in the harden module.
+    let entering_protected =
+        phase == SessionPhase::Protected && load().phase != SessionPhase::Protected;
     update(|j| {
         j.phase = phase;
         j.last_error = error;
     })?;
+    if entering_protected {
+        crate::harden::on_session_protected();
+    }
     Ok(())
 }
 
@@ -148,6 +165,7 @@ pub fn recovery_status() -> RecoveryStatus {
         || journal.tun_expected
         || journal.firewall_expected
         || journal.network_lock_expected
+        || journal.connection_filter_expected
         || journal.tor_expected;
     let live_dirty = proxy_live || tun_live || firewall_live || network_lock_live || tor_live;
     let interrupted =

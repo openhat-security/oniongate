@@ -1,8 +1,7 @@
 //! `oniongate` — the headless companion.
 //!
-//! The CLI links the same core modules as the GUI. Full protected-session
-//! orchestration parity is still pre-stable: `start` currently owns managed Tor
-//! but not the GUI's TUN/firewall/proxy sequence.
+//! The CLI links the same core modules as the GUI. `start` calls the same
+//! [`crate::connect::bring_up`] path as the desktop app.
 
 use clap::{Parser, Subcommand};
 
@@ -25,10 +24,12 @@ struct Cli {
 enum Command {
     /// Show connection, bootstrap, and recovery status.
     Status,
-    /// Connect Tor using the saved strategy.
+    /// Connect using the saved strategy (Tor, OS SOCKS or TUN, kill switch).
     Start,
     /// Best-effort cleanup using the recovery journal and live process discovery.
     Stop,
+    /// Restore host network defaults from the recovery journal (no leftover lock).
+    EmergencyRestore,
     /// Request a new Tor identity (NEWNYM).
     Newnym {
         /// Terminate processes with live clearnet sockets, then NEWNYM.
@@ -136,6 +137,7 @@ pub async fn run(args: &[String]) -> i32 {
         Command::Status => status().await,
         Command::Start => start().await,
         Command::Stop => stop().await,
+        Command::EmergencyRestore => emergency_restore().await,
         Command::Newnym { kill_clearnet } => newnym(kill_clearnet).await,
         Command::Bridges => {
             let s = settings::load();
@@ -238,42 +240,36 @@ async fn status() -> i32 {
 }
 
 async fn start() -> i32 {
-    if let Err(e) = crate::session::begin_connect() {
-        return fail(e);
-    }
-    let mut managed = None;
-    let outcome = if settings::load().smart_connect {
-        tor::smart_connect(&mut managed).await.map(|r| r.message)
-    } else {
-        tor::start_tor(&mut managed).await
-    };
-    match outcome {
+    let managed_tor = tokio::sync::Mutex::new(None);
+    let managed_singbox = tokio::sync::Mutex::new(None);
+    let saved_proxy = std::sync::Mutex::new(
+        crate::session::load()
+            .original_proxy
+            .unwrap_or_default(),
+    );
+    match crate::connect::bring_up(&managed_tor, &managed_singbox, &saved_proxy).await {
         Ok(msg) => {
-            let _ = crate::session::set_phase(
-                crate::session::SessionPhase::Degraded,
-                Some(
-                    "CLI start brought up managed Tor only; TUN, kill switch, and proxy are not applied"
-                        .into(),
-                ),
-            );
             println!("{msg}");
-            println!(
-                "session_phase=Degraded (managed Tor only; use the desktop app for a Protected boundary)"
-            );
-            // Keep the managed child alive for the session rather than killing
-            // it when this process exits.
-            std::mem::forget(managed);
+            println!("session_phase={:?}", crate::session::load().phase);
+            // Keep managed children alive after this process would otherwise
+            // drop them. Helper-backed TUN and OS SOCKS survive on their own.
+            std::mem::forget(managed_tor);
+            std::mem::forget(managed_singbox);
             0
         }
-        Err(e) => {
-            let _ =
-                crate::session::set_phase(crate::session::SessionPhase::Degraded, Some(e.clone()));
-            fail(e)
-        }
+        Err(e) => fail(e),
     }
 }
 
 async fn stop() -> i32 {
+    teardown(crate::cleanup::TeardownMode::RestoreHost).await
+}
+
+async fn emergency_restore() -> i32 {
+    teardown(crate::cleanup::TeardownMode::RestoreHost).await
+}
+
+async fn teardown(mode: crate::cleanup::TeardownMode) -> i32 {
     let journal = crate::session::load();
     let managed_tor = tokio::sync::Mutex::new(None);
     let managed_singbox = tokio::sync::Mutex::new(None);
@@ -285,7 +281,7 @@ async fn stop() -> i32 {
             &managed_singbox,
             &managed_snowflake,
             &saved_proxy,
-            crate::cleanup::TeardownMode::RestoreHost,
+            mode,
         )
         .await,
     )
@@ -519,5 +515,10 @@ mod tests {
         assert!(Cli::try_parse_from(["oniongate", "helper", "start"]).is_ok());
         assert!(Cli::try_parse_from(["oniongate", "helper", "stop"]).is_ok());
         assert!(Cli::try_parse_from(["oniongate", "helper"]).is_err());
+    }
+
+    #[test]
+    fn emergency_restore_parses() {
+        assert!(Cli::try_parse_from(["oniongate", "emergency-restore"]).is_ok());
     }
 }

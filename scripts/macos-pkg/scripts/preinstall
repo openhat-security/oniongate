@@ -1,0 +1,65 @@
+#!/bin/bash
+# OnionGate installer — preinstall.
+#
+# Quit a running OnionGate and bootout the existing privileged helper so the
+# payload and the daemon binary can be replaced cleanly. Nothing here may fail
+# the install: a first-time install has neither of them.
+#
+# Output goes to /var/log/install.log only. Never print settings, bridge lines,
+# keys, addresses, or process command lines.
+
+set -u
+
+LABEL="com.adamsiwiec.oniongate.helper"
+PLIST="/Library/LaunchDaemons/${LABEL}.plist"
+APP_EXECUTABLE="/Applications/OnionGate.app/Contents/MacOS/OnionGate"
+LEGACY_APP_EXECUTABLE="/Applications/OnionGate.app/Contents/MacOS/tor-socks-gui"
+
+log() { echo "OnionGate preinstall: $*"; }
+
+console_uid() {
+    /usr/bin/stat -f %u /dev/console 2>/dev/null
+}
+
+quit_running_app() {
+    # Nothing to do when the app was never installed here.
+    [ -x "$APP_EXECUTABLE" ] || [ -x "$LEGACY_APP_EXECUTABLE" ] || return 0
+
+    # Ask politely first, in the console user's GUI session, so the app runs its
+    # own teardown and restores host network state instead of being killed
+    # mid-session.
+    uid="$(console_uid)"
+    if [ -n "${uid:-}" ] && [ "$uid" -gt 0 ] 2>/dev/null; then
+        /bin/launchctl asuser "$uid" /usr/bin/osascript \
+            -e 'tell application "System Events" to if exists (processes where name is "OnionGate") then tell application "OnionGate" to quit' \
+            >/dev/null 2>&1 || true
+    fi
+
+    # Match the installed executable path exactly. The CLI is `oniongate`;
+    # a bare `pkill -x oniongate` would take that out too.
+    for exe in "$APP_EXECUTABLE" "$LEGACY_APP_EXECUTABLE"; do
+        [ -x "$exe" ] || continue
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            /usr/bin/pgrep -f "^${exe}$" >/dev/null 2>&1 || break
+            sleep 1
+        done
+        if /usr/bin/pgrep -f "^${exe}$" >/dev/null 2>&1; then
+            log "app did not quit in time; terminating it"
+            /usr/bin/pkill -f "^${exe}$" >/dev/null 2>&1 || true
+            sleep 2
+            /usr/bin/pkill -9 -f "^${exe}$" >/dev/null 2>&1 || true
+        fi
+    done
+}
+
+bootout_helper() {
+    [ -f "$PLIST" ] || return 0
+    log "unloading the existing privileged helper"
+    /bin/launchctl bootout system "$PLIST" >/dev/null 2>&1 || true
+    /bin/launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
+}
+
+quit_running_app
+bootout_helper
+
+exit 0

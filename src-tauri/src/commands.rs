@@ -58,26 +58,11 @@ pub struct AppStatus {
     pub install_hint: String,
     pub persistence_changes: usize,
     pub session_phase: crate::session::SessionPhase,
+    pub connection_filter: crate::ne_filter::FilterStatus,
 }
 
 fn finish_protected() -> Result<(), String> {
-    let settings = settings::load();
-    if settings.strict_tcp_lock {
-        let fw = crate::firewall::status();
-        if !fw.strict_deny_live {
-            return crate::session::set_phase(
-                crate::session::SessionPhase::Degraded,
-                Some("NIC lock is on but live pf default-deny was not verified".into()),
-            );
-        }
-        if !settings.strict_tcp_exceptions.is_empty() {
-            return crate::session::set_phase(
-                crate::session::SessionPhase::Degraded,
-                Some("NIC lock has destination exceptions (machine-wide leak)".into()),
-            );
-        }
-    }
-    crate::session::set_phase(crate::session::SessionPhase::Protected, None)
+    crate::connect::finish_protected()
 }
 
 fn install_hint() -> String {
@@ -124,6 +109,7 @@ pub async fn get_status() -> AppStatus {
         install_hint: install_hint(),
         persistence_changes: crate::workstation::persistence_change_count(),
         session_phase: crate::session::load().phase,
+        connection_filter: crate::ne_filter::status(),
     }
 }
 
@@ -169,8 +155,15 @@ pub async fn remove_privileged_helper() -> Result<String, String> {
 /// Trigger the admin authorization once so later privileged operations (system
 /// proxy, TUN, firewall, hardening) reuse the cached authorization instead of
 /// prompting repeatedly. Runs a trivial elevated no-op.
+///
+/// Skipped entirely in helper-backed TUN mode: the helper performs the routing
+/// and firewall mutations itself, so priming would be a prompt that buys the
+/// user nothing.
 #[tauri::command]
 pub async fn prime_admin_auth() -> Result<String, String> {
+    if settings::load().connection_mode == "tun" && crate::tun::helper_backed() {
+        return Ok("Administrator access is not needed: the privileged helper is running".into());
+    }
     tauri::async_runtime::spawn_blocking(|| {
         crate::elevate::run_shell_with_prompt(
             "/usr/bin/true",
@@ -234,36 +227,6 @@ pub async fn set_remote_dns(state: State<'_, AppState>, enabled: bool) -> Result
     }
 }
 
-async fn maybe_auto_enable_proxy(
-    state: &State<'_, AppState>,
-    msg: String,
-) -> Result<String, String> {
-    let settings = settings::load();
-    if settings.auto_enable_proxy && tor::socks_reachable() {
-        let mut saved = state
-            .saved_proxy
-            .lock()
-            .map_err(|_| "State lock poisoned".to_string())?;
-        if crate::session::load().original_proxy.is_none() {
-            let snapshot = proxy::capture()?;
-            crate::session::record_proxy_before(snapshot.clone())?;
-            *saved = snapshot;
-        }
-        match proxy::enable(&mut saved) {
-            Ok(pmsg) => {
-                crate::logs::append(&pmsg);
-                return Ok(format!("{msg}. {pmsg}"));
-            }
-            Err(e) => {
-                crate::logs::append(format!("Auto-enable proxy failed: {e}"));
-                return Err(format!(
-                    "{msg}. Requested system proxy was not enabled: {e}"
-                ));
-            }
-        }
-    }
-    Ok(msg)
-}
 
 #[tauri::command]
 pub async fn arm_network_lock() -> Result<String, String> {
@@ -291,157 +254,28 @@ pub async fn quit_user_applications() -> Result<crate::apps_lifecycle::QuitAppsR
     crate::apps_lifecycle::quit_user_applications().await
 }
 
+/// Applications OnionGate closed that it can launch again. The ledger is
+/// memory-only, so this is empty in a fresh session and after teardown.
+#[tauri::command]
+pub async fn list_reopenable_apps() -> Result<Vec<crate::apps_lifecycle::ReopenableApp>, String> {
+    Ok(crate::apps_lifecycle::reopenable_apps())
+}
+
+/// Relaunch the closed-application ledger. Refuses unless TUN is live and the
+/// session is verified Protected, and validates every bundle before launching.
+#[tauri::command]
+pub async fn reopen_closed_apps() -> Result<String, String> {
+    crate::apps_lifecycle::reopen_closed_apps().await
+}
+
 #[tauri::command]
 pub async fn start_tor(state: State<'_, AppState>) -> Result<String, String> {
-    let settings = settings::load();
-    if settings.strict_tcp_lock {
-        if let Some(reason) = tor::endpoints::strategy_blocks_strict_lock(&settings) {
-            return Err(reason.into());
-        }
-        let vpn = crate::vpn_detect::detect();
-        if vpn.active {
-            return Err(format!("NIC lock refuses a competing VPN ({})", vpn.detail));
-        }
-        if cfg!(not(target_os = "macos")) {
-            return Err("The default-deny NIC lock is macOS-only".into());
-        }
-    }
-    crate::session::begin_connect()?;
-    // Fail closed during the whole bootstrap/TUN/proxy bring-up window — same
-    // idea as a VPN that blocks traffic while reconnecting.
-    let lock_msg = crate::firewall::arm_for_transition().await?;
-    crate::session::expect_transports(
-        tor::pt::transports_from_bridge_lines(&settings.bridge_lines)
-            .into_iter()
-            .map(|transport| transport.as_str().to_string())
-            .collect(),
-    )?;
-    let msg = {
-        let mut guard = state.managed_tor.lock().await;
-        let started = if settings.smart_connect {
-            let result = tor::smart_connect(&mut guard).await;
-            result.map(|r| r.message)
-        } else {
-            let m = tor::start_tor(&mut guard).await;
-            if m.is_ok() {
-                let strat = if settings.bridges_enabled {
-                    "bridges"
-                } else {
-                    "direct"
-                };
-                let _ = crate::db::start_session(strat, &settings.connection_mode);
-            }
-            m
-        };
-        match started {
-            Ok(message) => message,
-            Err(e) => {
-                // Keep the lock on failure so clearnet does not reopen while the
-                // user is still in a Connecting/Degraded journal state. They can
-                // Disconnect / Emergency Restore to clear it.
-                let _ = crate::session::set_phase(
-                    crate::session::SessionPhase::Degraded,
-                    Some(e.clone()),
-                );
-                return Err(e);
-            }
-        }
-    };
-    crate::logs::append(&msg);
-
-    let mut parts = vec![lock_msg, msg];
-
-    if settings.connection_mode == "tun" {
-        crate::session::expect_tun(true)?;
-        let mut sb = state.managed_singbox.lock().await;
-        match crate::tun::start(&mut sb).await {
-            Ok(tmsg) => {
-                crate::logs::append(&tmsg);
-                parts.push(tmsg);
-            }
-            Err(e) => {
-                crate::logs::append(format!("TUN start failed: {e}"));
-                // Fail closed: do not report a successful "connect" in TUN mode.
-                let _ = settings::update(|s| s.connection_mode = "proxy".into());
-                let _ = crate::tun::stop(&mut sb).await;
-                let _ = crate::session::set_phase(
-                    crate::session::SessionPhase::Degraded,
-                    Some(e.clone()),
-                );
-                return Err(format!(
-                    "Tor is up, but TUN was not started ({e}). Switched back to Proxy mode. \
-                     Network stays locked until you disconnect."
-                ));
-            }
-        }
-        if settings.kill_switch {
-            crate::session::expect_firewall(true)?;
-            match crate::firewall::enable_kill_switch().await {
-                Ok(kmsg) => {
-                    crate::logs::append(&kmsg);
-                    parts.push(kmsg);
-                }
-                Err(e) => {
-                    crate::logs::append(format!("Required kill switch failed: {e}"));
-                    let _ = crate::session::set_phase(
-                        crate::session::SessionPhase::Degraded,
-                        Some(e.clone()),
-                    );
-                    return Err(format!(
-                        "Tor and TUN are up, but the requested kill switch was not verified ({e}). \
-                         The session is degraded; retry the kill switch or disconnect."
-                    ));
-                }
-            }
-        }
-        // Steady-state containment is TUN (+ optional KS). Drop the transition lock.
-        match crate::firewall::disarm_after_transition().await {
-            Ok(msg) => parts.push(msg),
-            Err(e) => {
-                crate::logs::append(format!("Network lock release failed: {e}"));
-                parts.push(format!(
-                    "Protected, but the transition lock could not be cleared ({e})"
-                ));
-            }
-        }
-        finish_protected()?;
-        return Ok(parts.join(". "));
-    }
-
-    let result = maybe_auto_enable_proxy(&state, parts.join(". ")).await;
-    let result = match result {
-        Ok(message) if settings.kill_switch => {
-            crate::session::expect_firewall(true)?;
-            match crate::firewall::enable_kill_switch().await {
-                Ok(kill_switch) => Ok(format!("{message}. {kill_switch}")),
-                Err(error) => Err(format!(
-                    "Tor started, but the requested kill switch was not verified ({error})"
-                )),
-            }
-        }
-        other => other,
-    };
-    match &result {
-        Ok(message) => match crate::firewall::disarm_after_transition().await {
-            Ok(unlocked) => {
-                finish_protected()?;
-                Ok(format!("{message}. {unlocked}"))
-            }
-            Err(e) => {
-                finish_protected()?;
-                Ok(format!(
-                    "{message}. Protected, but the transition lock could not be cleared ({e})"
-                ))
-            }
-        },
-        Err(error) => {
-            let _ = crate::session::set_phase(
-                crate::session::SessionPhase::Degraded,
-                Some(error.clone()),
-            );
-            Err(error.clone())
-        }
-    }
+    crate::connect::bring_up(
+        &state.managed_tor,
+        &state.managed_singbox,
+        &state.saved_proxy,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1012,14 +846,24 @@ pub async fn apply_harden(id: String, enable: bool) -> Result<String, String> {
 pub async fn stop_tor(state: State<'_, AppState>) -> Result<String, String> {
     let _ = crate::db::end_session();
     // Full session teardown: TUN, kill switch, system proxy, snowflake, Tor, PT orphans.
-    crate::cleanup::teardown_session(
+    let result = crate::cleanup::teardown_session(
         &state.managed_tor,
         &state.managed_singbox,
         &state.managed_snowflake,
         &state.saved_proxy,
         crate::cleanup::TeardownMode::Disconnect,
     )
-    .await
+    .await;
+    end_of_session_memory();
+    result
+}
+
+/// Drop the memory-only state that belongs to the session that just ended: the
+/// reopen ledger, so a later session cannot relaunch its apps, and the clearnet
+/// announcements, so the next Protected session alerts from scratch.
+fn end_of_session_memory() {
+    crate::apps_lifecycle::clear_reopen_ledger();
+    crate::egress_watch::reset_announced();
 }
 
 #[tauri::command]
@@ -1028,16 +872,33 @@ pub fn get_recovery_status() -> crate::session::RecoveryStatus {
 }
 
 #[tauri::command]
+pub fn get_connection_filter_status() -> crate::ne_filter::FilterStatus {
+    crate::ne_filter::status()
+}
+
+#[tauri::command]
+pub fn activate_connection_filter() -> Result<String, String> {
+    crate::ne_filter::activate()
+}
+
+#[tauri::command]
+pub fn deactivate_connection_filter() -> Result<String, String> {
+    crate::ne_filter::deactivate()
+}
+
+#[tauri::command]
 pub async fn emergency_restore(state: State<'_, AppState>) -> Result<String, String> {
     let _ = crate::db::end_session();
-    crate::cleanup::teardown_session(
+    let result = crate::cleanup::teardown_session(
         &state.managed_tor,
         &state.managed_singbox,
         &state.managed_snowflake,
         &state.saved_proxy,
         crate::cleanup::TeardownMode::RestoreHost,
     )
-    .await
+    .await;
+    end_of_session_memory();
+    result
 }
 
 #[tauri::command]
@@ -1375,4 +1236,198 @@ pub async fn remove_strict_exception(dest: String) -> Result<String, String> {
     })?;
     crate::logs::append("NIC lock exception removed");
     crate::firewall::enable_kill_switch().await
+}
+
+/// Allowlisted public pages only. The UI never supplies a URL string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectLink {
+    Docs,
+    Github,
+    License,
+}
+
+const DOCS_URL: &str = "https://openhat-security.github.io/oniongate/";
+const GITHUB_URL: &str = "https://github.com/openhat-security/oniongate";
+const LICENSE_URL: &str = "https://github.com/openhat-security/oniongate/blob/main/LICENSE";
+
+fn project_link_url(link: ProjectLink) -> &'static str {
+    match link {
+        ProjectLink::Docs => DOCS_URL,
+        ProjectLink::Github => GITHUB_URL,
+        ProjectLink::License => LICENSE_URL,
+    }
+}
+
+fn open_https_url(url: &'static str) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("refusing to open a non-https project link".into());
+    }
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open")
+        .arg(url)
+        .status()
+        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    let status = std::process::Command::new("xdg-open")
+        .arg(url)
+        .status()
+        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    let status = {
+        use crate::win_console::HideConsole;
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.args(["/C", "start", "", url]).hide_console();
+        cmd.status().map_err(|e| e.to_string())?
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        return Err("Opening project links is not supported on this OS".into());
+    }
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Could not open the link in a browser".into())
+    }
+}
+
+/// The `.pkg` installer stages the uninstaller inside the bundle. DMG and
+/// from-source installs never have it, so the error has to point somewhere real.
+const MISSING_UNINSTALLER: &str =
+    "This copy of OnionGate has no built-in uninstaller. It ships only with the macOS .pkg \
+     installer, not with the DMG or a build from source. To remove OnionGate, run \
+     scripts/macos-pkg/uninstall-oniongate.sh from the OnionGate repository — it does the same \
+     work and keeps your data unless you pass --purge-data.";
+
+/// `…/OnionGate.app/Contents/MacOS/oniongate` → `…/Contents/Resources/uninstall.command`.
+fn uninstaller_path_for(exe: &std::path::Path) -> Option<std::path::PathBuf> {
+    let contents = exe.parent()?.parent()?;
+    if contents.file_name()? != "Contents" {
+        return None;
+    }
+    Some(contents.join("Resources").join("uninstall.command"))
+}
+
+/// Hand the bundled uninstaller to the user's own session so Terminal runs it
+/// and the script asks for administrator access itself. OnionGate never
+/// executes it as root, and never runs it without the user seeing it.
+#[tauri::command]
+pub async fn open_uninstaller() -> Result<String, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("The bundled uninstaller is macOS-only.".into());
+    }
+    if crate::apps_lifecycle::running_as_root() {
+        return Err(
+            "Refusing to run the uninstaller from a privileged process. Open OnionGate as your \
+             own user and try again."
+                .into(),
+        );
+    }
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("Could not locate the running OnionGate bundle: {e}"))?;
+    let script = uninstaller_path_for(&exe).ok_or_else(|| MISSING_UNINSTALLER.to_string())?;
+    if !script.is_file() {
+        return Err(MISSING_UNINSTALLER.into());
+    }
+    let status = tokio::process::Command::new("/usr/bin/open")
+        .arg(&script)
+        .status()
+        .await
+        .map_err(|e| format!("Could not open the uninstaller: {e}"))?;
+    if !status.success() {
+        return Err("Could not open the uninstaller in Terminal.".into());
+    }
+    Ok(
+        "Opened the OnionGate uninstaller in Terminal. It asks you to confirm and requests \
+        administrator access itself. Your settings and Onion Host keys are kept unless you \
+        choose to purge data."
+            .into(),
+    )
+}
+
+/// Open the docs site, the project GitHub page, or the GPL-3.0 license text in
+/// the system browser.
+#[tauri::command]
+pub fn open_project_link(link: ProjectLink) -> Result<String, String> {
+    open_https_url(project_link_url(link))?;
+    Ok(match link {
+        ProjectLink::Docs => "Opened the OnionGate docs".into(),
+        ProjectLink::Github => "Opened the OnionGate GitHub page".into(),
+        ProjectLink::License => "Opened the OnionGate license".into(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_links_are_fixed_https() {
+        assert_eq!(
+            project_link_url(ProjectLink::Docs),
+            "https://openhat-security.github.io/oniongate/"
+        );
+        assert_eq!(
+            project_link_url(ProjectLink::Github),
+            "https://github.com/openhat-security/oniongate"
+        );
+        assert_eq!(
+            project_link_url(ProjectLink::License),
+            "https://github.com/openhat-security/oniongate/blob/main/LICENSE"
+        );
+        assert!(DOCS_URL.starts_with("https://"));
+        assert!(GITHUB_URL.starts_with("https://"));
+        assert!(LICENSE_URL.starts_with("https://"));
+    }
+
+    #[test]
+    fn project_link_enum_deserializes_from_ui_tags() {
+        assert_eq!(
+            serde_json::from_str::<ProjectLink>("\"docs\"").unwrap(),
+            ProjectLink::Docs
+        );
+        assert_eq!(
+            serde_json::from_str::<ProjectLink>("\"github\"").unwrap(),
+            ProjectLink::Github
+        );
+        assert_eq!(
+            serde_json::from_str::<ProjectLink>("\"license\"").unwrap(),
+            ProjectLink::License
+        );
+        assert!(serde_json::from_str::<ProjectLink>("\"https://evil.example\"").is_err());
+    }
+
+    #[test]
+    fn missing_uninstaller_message_points_at_the_repository_script() {
+        // The UI surfaces this verbatim, so it has to name the fallback and say
+        // why the bundled one is absent.
+        assert!(MISSING_UNINSTALLER.contains("scripts/macos-pkg/uninstall-oniongate.sh"));
+        assert!(MISSING_UNINSTALLER.contains(".pkg"));
+        assert!(MISSING_UNINSTALLER.contains("DMG"));
+        assert!(MISSING_UNINSTALLER.contains("--purge-data"));
+        assert!(!MISSING_UNINSTALLER.contains("uninstall.command"));
+    }
+
+    #[test]
+    fn uninstaller_resolves_next_to_the_running_executable() {
+        assert_eq!(
+            uninstaller_path_for(std::path::Path::new(
+                "/Applications/OnionGate.app/Contents/MacOS/oniongate"
+            )),
+            Some(std::path::PathBuf::from(
+                "/Applications/OnionGate.app/Contents/Resources/uninstall.command"
+            ))
+        );
+        // A from-source `cargo run` binary is not inside a bundle at all.
+        assert_eq!(
+            uninstaller_path_for(std::path::Path::new(
+                "/Users/me/oniongate/src-tauri/target/debug/OnionGate"
+            )),
+            None
+        );
+        assert_eq!(
+            uninstaller_path_for(std::path::Path::new("/oniongate")),
+            None
+        );
+    }
 }

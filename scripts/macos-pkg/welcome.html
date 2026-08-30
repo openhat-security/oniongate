@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Install OnionGate</title>
+  <style>
+    body { font: 13px/1.45 -apple-system, BlinkMacSystemFont, Helvetica, sans-serif; color: #1d1d1f; }
+    h1 { font-size: 18px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>OnionGate</h1>
+  <p>This installer places OnionGate in <strong>/Applications</strong> and registers a privileged helper so Connect and Disconnect do not ask for a password on every use.</p>
+  <p>You will authenticate once, as administrator, during this install. The install location cannot be changed: the helper only works on the boot volume.</p>
+  <p>A signed build can also load OnionGate’s connection filter (a Network Extension). After install, approve it in <strong>System Settings → General → Login Items & Extensions → Network Extensions</strong> if macOS asks. The filter holds and drops outbound flows that are not already Tor. It does not replace the packet lock, and Apple can hide some of its own processes from it. Unsigned builds skip the filter and never appear in that list.</p>
+  <p>OnionGate is free software under the GNU General Public License, version 3. The next pane is the license.</p>
+</body>
+</html>

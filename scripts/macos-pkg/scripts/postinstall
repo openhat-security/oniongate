@@ -1,0 +1,131 @@
+#!/bin/bash
+# OnionGate installer — postinstall. Runs as root.
+#
+# This is the reason OnionGate ships a .pkg instead of a .dmg:
+#   1. installer-placed payloads are not quarantined, and we clear the
+#      attribute anyway in case an earlier drag-install left one behind;
+#   2. the privileged helper is installed and bootstrapped here, so the app is
+#      prompt-free from its very first launch;
+#   3. sing-box is pinned to a root-owned path, so the root helper never execs
+#      a user-writable binary.
+#
+# Destinations, label, and permissions must stay identical to
+# src-tauri/src/helper/service.rs `macos_install`, otherwise the app's own
+# helper status check disagrees with what the installer did.
+#
+# Output goes to /var/log/install.log only. Never print settings, bridge lines,
+# keys, addresses, or process command lines.
+
+set -u
+
+LABEL="com.adamsiwiec.oniongate.helper"
+HELPER_DEST="/Library/PrivilegedHelperTools/${LABEL}"
+PLIST_DEST="/Library/LaunchDaemons/${LABEL}.plist"
+SINGBOX_DEST="/Library/PrivilegedHelperTools/oniongate-sing-box"
+
+# $3 is the destination volume. Absolute launchd paths only make sense on the
+# boot volume; distribution.xml restricts the install to it.
+VOLUME="${3:-/}"
+APP="${VOLUME%/}/Applications/OnionGate.app"
+
+log() { echo "OnionGate postinstall: $*"; }
+
+clear_quarantine() {
+    if [ -d "$APP" ]; then
+        /usr/bin/xattr -dr com.apple.quarantine "$APP" >/dev/null 2>&1 || true
+        log "cleared the download quarantine attribute"
+    else
+        log "WARNING: the app bundle is not where it was expected; skipping"
+    fi
+}
+
+write_helper_plist() {
+    # Deliberately no --allow-uid: the installer runs as root and cannot know
+    # which user will run the app. The daemon falls back to the console owner
+    # (`allowed_uid()` in src-tauri/src/bin/oniongate_helper.rs), which is the
+    # right answer on a machine whose GUI user can change.
+    /bin/cat > "$PLIST_DEST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${HELPER_DEST}</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>
+PLIST
+}
+
+install_helper() {
+    src="${APP}/Contents/MacOS/oniongate-helper"
+    if [ ! -f "$src" ]; then
+        # Only release bundles carry the helper (tauri.release.conf.json
+        # externalBin). A payload without it still installs a working app that
+        # falls back to the administrator prompt.
+        log "WARNING: no privileged helper in this build; the app will ask for an administrator password per privileged action"
+        return 0
+    fi
+
+    /bin/mkdir -p /Library/PrivilegedHelperTools || return 1
+    /usr/sbin/chown root:wheel /Library/PrivilegedHelperTools || true
+    /bin/chmod 755 /Library/PrivilegedHelperTools || true
+
+    /bin/cp -f "$src" "$HELPER_DEST" || {
+        log "ERROR: could not install the privileged helper binary"
+        return 1
+    }
+    /usr/sbin/chown root:wheel "$HELPER_DEST" || return 1
+    /bin/chmod 544 "$HELPER_DEST" || return 1
+
+    write_helper_plist || {
+        log "ERROR: could not write the launch daemon"
+        return 1
+    }
+    /usr/sbin/chown root:wheel "$PLIST_DEST" || return 1
+    /bin/chmod 644 "$PLIST_DEST" || return 1
+
+    # preinstall already booted the old job out; repeat it because an upgrade
+    # over a hand-installed helper may have left a different label loaded.
+    /bin/launchctl bootout system "$PLIST_DEST" >/dev/null 2>&1 || true
+    /bin/launchctl enable "system/${LABEL}" >/dev/null 2>&1 || true
+    if /bin/launchctl bootstrap system "$PLIST_DEST" >/dev/null 2>&1; then
+        log "privileged helper installed and running"
+    else
+        log "WARNING: the privileged helper is installed but did not start; it will load at the next boot"
+    fi
+}
+
+install_pinned_singbox() {
+    src="${APP}/Contents/MacOS/sing-box"
+    if [ ! -f "$src" ]; then
+        log "WARNING: no sing-box sidecar in this build; TUN mode will be unavailable until one is installed"
+        return 0
+    fi
+
+    /bin/mkdir -p /Library/PrivilegedHelperTools || return 1
+    /bin/cp -f "$src" "$SINGBOX_DEST" || {
+        log "ERROR: could not pin the sing-box sidecar"
+        return 1
+    }
+    /usr/sbin/chown root:wheel "$SINGBOX_DEST" || return 1
+    /bin/chmod 555 "$SINGBOX_DEST" || return 1
+    log "pinned the sing-box sidecar for the privileged helper"
+}
+
+status=0
+clear_quarantine
+install_helper || status=1
+install_pinned_singbox || status=1
+
+if [ "$status" -ne 0 ]; then
+    log "finished with errors; open OnionGate and use Settings to install the helper manually"
+fi
+
+# Never fail the install over the helper: the app remains usable with the
+# administrator prompt, and a failed package is worse than a degraded one.
+exit 0

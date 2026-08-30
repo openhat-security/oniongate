@@ -1,8 +1,10 @@
+mod alert;
 mod apps_lifecycle;
 mod bypass;
 mod cleanup;
 pub mod cli;
 mod commands;
+mod connect;
 mod db;
 mod deny_log;
 mod deps;
@@ -14,7 +16,9 @@ mod harden;
 pub mod helper;
 mod ip;
 mod logs;
+mod ne_filter;
 mod onion_service;
+mod paths;
 mod proxy;
 mod routing;
 mod session;
@@ -23,9 +27,13 @@ mod settings;
 mod snowflake;
 mod tor;
 mod tray;
-mod tun;
+/// Public so the privileged helper binary can reuse the one sing-box config
+/// generator instead of duplicating the routing policy on the root side.
+pub mod tun;
 mod verify;
 mod vpn_detect;
+/// Shared Windows CREATE_NO_WINDOW helper for console-subsystem children.
+pub mod win_console;
 mod workstation;
 
 use commands::AppState;
@@ -53,9 +61,13 @@ pub fn run() {
             } else if recovery.detail.starts_with("A stale") {
                 let _ = session::clear();
             }
+            // Hand the window layer to the in-app clearnet alert before the
+            // egress watch can raise one.
+            alert::register(app.handle().clone());
             session_guard::start_monitor();
             workstation::start_monitor();
             egress_watch::start_monitor();
+            crate::ne_filter::start_monitor();
             ip::start_monitor();
             crate::firewall::start_strict_watchdog();
             watch_termination_signals(app.handle().clone());
@@ -79,6 +91,8 @@ pub fn run() {
             commands::arm_network_lock,
             commands::disarm_network_lock,
             commands::quit_user_applications,
+            commands::list_reopenable_apps,
+            commands::reopen_closed_apps,
             commands::get_recovery_status,
             commands::emergency_restore,
             commands::start_tun,
@@ -163,6 +177,11 @@ pub fn run() {
             commands::save_persistence_baseline,
             commands::scan_login_items,
             commands::open_full_disk_access_settings,
+            commands::open_project_link,
+            commands::open_uninstaller,
+            commands::get_connection_filter_status,
+            commands::activate_connection_filter,
+            commands::deactivate_connection_filter,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -5,8 +5,10 @@ use tokio::process::Command;
 
 use super::{FirewallStatus, NetworkLockStatus};
 
-const TABLE: &str = "tor_socks_gui_ks";
-const LOCK_TABLE: &str = "tor_socks_gui_lock";
+const TABLE: &str = "oniongate_ks";
+const LOCK_TABLE: &str = "oniongate_lock";
+const LEGACY_TABLE: &str = "tor_socks_gui_ks";
+const LEGACY_LOCK_TABLE: &str = "tor_socks_gui_lock";
 
 fn marker_path() -> Result<std::path::PathBuf, String> {
     let dir = crate::tor::process::ensure_data_dir()?;
@@ -33,7 +35,7 @@ fn table_live(table: &str, needle: &str) -> Option<bool> {
 pub fn status() -> FirewallStatus {
     let marker_active =
         marker_path().ok().and_then(|p| fs::read_to_string(p).ok()) == Some("1".into());
-    let live = table_live(TABLE, "udp");
+    let live = table_live(TABLE, "udp").or_else(|| table_live(LEGACY_TABLE, "udp"));
     let active = live.unwrap_or(marker_active);
     let verified_live = live.is_some();
     FirewallStatus {
@@ -61,7 +63,7 @@ pub fn network_lock_status() -> NetworkLockStatus {
         .ok()
         .and_then(|p| fs::read_to_string(p).ok())
         == Some("1".into());
-    let live = table_live(LOCK_TABLE, "ip6");
+    let live = table_live(LOCK_TABLE, "ip6").or_else(|| table_live(LEGACY_LOCK_TABLE, "ip6"));
     let active = live.unwrap_or(marker_active);
     let verified_live = live.is_some();
     NetworkLockStatus {
@@ -104,6 +106,22 @@ fn nft_script_disable(table: &str) -> String {
     format!("nft delete table inet {table} 2>/dev/null || true\n")
 }
 
+fn nft_script_disable_ks() -> String {
+    format!(
+        "{}{}",
+        nft_script_disable(TABLE),
+        nft_script_disable(LEGACY_TABLE)
+    )
+}
+
+fn nft_script_disable_lock() -> String {
+    format!(
+        "{}{}",
+        nft_script_disable(LOCK_TABLE),
+        nft_script_disable(LEGACY_LOCK_TABLE)
+    )
+}
+
 pub async fn enable() -> Result<String, String> {
     apply_script(
         &nft_script_enable(TABLE),
@@ -117,7 +135,7 @@ pub async fn enable() -> Result<String, String> {
 
 pub async fn disable() -> Result<String, String> {
     apply_script(
-        &nft_script_disable(TABLE),
+        &nft_script_disable_ks(),
         crate::helper::HelperRequest::KillSwitchDisable,
     )
     .await?;
@@ -145,7 +163,7 @@ pub async fn enable_network_lock() -> Result<String, String> {
 
 pub async fn disable_network_lock() -> Result<String, String> {
     apply_script(
-        &nft_script_disable(LOCK_TABLE),
+        &nft_script_disable_lock(),
         crate::helper::HelperRequest::NetworkLockDisable,
     )
     .await?;

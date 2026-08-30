@@ -78,14 +78,33 @@ missing transport binary appears as **missing** under Active transports.
 ## TUN will not start
 
 - Connect Tor first; TUN refuses to start without live SOCKS.
-- Approve the administrator prompt.
+- Approve the administrator prompt (only needed without a helper-backed TUN).
 - Confirm bundled sing-box exists (`make deps` for a source checkout).
-- Check `sing-box.log` in OnionGate's local data directory.
+- Check the sing-box log (see below for where it lives).
 - Disconnect another VPN that controls the default route.
 
 OnionGate deliberately does not launch an unprivileged sing-box process as a
 fallback. If it cannot observe the process/interface after startup, TUN remains
-inactive.
+inactive. A helper-backed TUN never quietly reroutes to the administrator prompt
+either: once the helper is provisioned, a refusal from it is fatal.
+
+### Where the sing-box log is, and why Logs can look empty
+
+Where sing-box writes depends on who started it:
+
+- **Admin-prompt start (no helper).** sing-box runs from OnionGate's local data
+  directory and writes `sing-box.log` there. The in-app **Logs** view can tail
+  it.
+- **Helper-backed start (the `.pkg` default).** The privileged helper starts
+  sing-box as root and writes its log to a **root-only file (mode 0600)** under a
+  root-owned directory. That is deliberate — the log can name routed
+  applications and paths — but it means the in-app log tail is **empty** in
+  helper mode, and it is not a malfunction.
+
+So when a helper-backed TUN fails to come up, do not go looking in **Logs**.
+The failure detail is returned **inside the helper's own error message** in the
+status toast (for example, "sing-box exited immediately …"). Copy that text
+before it dismisses; it is the authoritative signal, not the empty log tail.
 
 ## Kill switch problems
 
@@ -151,11 +170,9 @@ also destroys its Tor-owned service key and address.
 
 ## Resetting local state
 
-OnionGate currently uses a legacy internal directory name:
-
-- macOS: `~/Library/Application Support/tor-socks-gui/`
-- Linux: `~/.local/share/tor-socks-gui/`
-- Windows: `%LOCALAPPDATA%\tor-socks-gui\`
+- macOS: `~/Library/Application Support/oniongate/`
+- Linux: `~/.local/share/oniongate/`
+- Windows: `%LOCALAPPDATA%\oniongate\`
 
 It contains settings, logs, the database, recovery journal, generated Tor/TUN
 configuration, and permanent onion keys.
@@ -177,5 +194,5 @@ Use the GitHub bug template and include:
 - exact steps and the redacted error text.
 
 Security vulnerabilities belong in a private
-[GitHub Security Advisory](https://github.com/irruptio-security/oniongate/security/advisories/new),
+[GitHub Security Advisory](https://github.com/openhat-security/oniongate/security/advisories/new),
 never a public issue.

@@ -1,42 +1,43 @@
 # Command line
 
-`oniongate` is the headless companion for servers, scripts, and automation. It
-links the same Rust core used by the desktop app and is currently strongest for
-managed Tor and permanent onion hosting.
-
-::: warning Full protected-session parity is not implemented yet
-`oniongate start` starts Tor with the saved direct/bridge strategy, but it does
-not apply the desktop app's saved TUN, kill-switch, or operating-system proxy
-boundary. The journal is left **Degraded** (managed Tor only). Use the desktop
-app for a Protected boundary until CLI orchestration is completed.
-:::
+`oniongate-cli` is the headless companion for servers, scripts, and automation. It
+links the same Rust core used by the desktop app. `start` calls the same
+bring-up path as Connect: managed Tor, then OS SOCKS or TUN, then the requested
+kill switch. The journal is **Protected** only after those live components
+verify. Known SOCKS-ignoring apps still keep proxy mode **Degraded** unless
+the NIC lock is on.
 
 Exit codes: `0` success, `1` runtime failure, `2` usage error.
 
 ```bash
-oniongate --help
-oniongate host --help
+oniongate-cli --help
+oniongate-cli host --help
 ```
+
+The compiled binary is `oniongate-cli`. It cannot be named `oniongate` next to
+the GUI `OnionGate` — macOS treats those as the same file. Subcommands are
+unchanged.
 
 ## Connection
 
 ```bash
-oniongate status     # connection, bootstrap, and recovery state
-oniongate start      # start managed Tor using the saved direct/bridge strategy
-oniongate stop       # best-effort cleanup from journal + live process discovery
-oniongate newnym                 # request a new Tor identity
-oniongate newnym --kill-clearnet # terminate clearnet processes, then NEWNYM
-oniongate bridges    # list configured bridge lines
-oniongate settings   # print settings as JSON
-oniongate helper status   # privileged helper installed / running
-oniongate helper start    # install or refresh the helper
-oniongate helper stop     # remove the helper
+oniongate-cli status     # connection, bootstrap, and recovery state
+oniongate-cli start      # same protected-session bring-up as the desktop app
+oniongate-cli stop       # best-effort cleanup from journal + live process discovery
+oniongate-cli emergency-restore  # restore host defaults; do not leave a leftover lock
+oniongate-cli newnym                 # request a new Tor identity
+oniongate-cli newnym --kill-clearnet # terminate clearnet processes, then NEWNYM
+oniongate-cli bridges    # list configured bridge lines
+oniongate-cli settings   # print settings as JSON
+oniongate-cli helper status   # privileged helper installed / running
+oniongate-cli helper start    # install or refresh the helper
+oniongate-cli helper stop     # remove the helper
 ```
 
 `helper start` is what `make dev` runs after building the daemon. See
 [Daemons](/guide/daemons).
 
-`status` with no subcommand is the default, so bare `oniongate` prints status.
+`status` with no subcommand is the default, so bare `oniongate-cli` prints status.
 Read the individual `socks_up`, `control_up`, `dns_up`, connection-mode, and
 recovery fields; the phase alone is insufficient.
 
@@ -51,9 +52,9 @@ editor/terminal, and core OS processes), then sends `NEWNYM`. It does not
 restart OnionGate. Only PIDs from that census are killed; the flag never takes
 a pid list.
 
-There is not yet a headless `emergency-restore` subcommand. If `status` reports
-`recovery_needed=true`, open the desktop app and run Emergency Restore, or stop
-and manually verify every affected platform component before continuing.
+If `status` reports `recovery_needed=true`, run `oniongate-cli emergency-restore`
+or `oniongate-cli stop`, then confirm every affected platform component with
+`status` before continuing.
 
 ::: warning `bridges` and `settings` can print sensitive local data
 Bridge lines, selected application paths, and routing preferences may appear on
@@ -63,7 +64,7 @@ stdout. Do not paste their output into public issues or shared CI logs.
 Output is `key=value` lines, which keeps it greppable:
 
 ```bash
-oniongate status | grep '^socks_up='
+oniongate-cli status | grep '^socks_up='
 ```
 
 Status fields:
@@ -91,7 +92,7 @@ manage onion sites on a machine with no GUI.
 ### List sites
 
 ```bash
-oniongate host ls
+oniongate-cli host ls
 ```
 
 Tab-separated: id, name, address, port mapping, and authorization state.
@@ -108,9 +109,9 @@ Keeps its address across restarts. Client authorization is on unless you pass
 `--public`.
 
 ```bash
-oniongate host add blog --local-port 3000
-oniongate host add blog --local-port 3000 --onion-port 80
-oniongate host add status-page --local-port 8080 --public
+oniongate-cli host add blog --local-port 3000
+oniongate-cli host add blog --local-port 3000 --onion-port 80
+oniongate-cli host add status-page --local-port 8080 --public
 ```
 
 The site id is derived from the name (`My Blog` becomes `my-blog`) and is what
@@ -120,7 +121,7 @@ A private site starts closed with an unusable authorization lock. Issue a named
 credential before a client can connect:
 
 ```bash
-oniongate host auth add blog alice
+oniongate-cli host auth add blog alice
 ```
 
 ### Create a temporary site
@@ -129,9 +130,9 @@ The key is discarded at creation, so the address can never be recreated. The
 site disappears when Tor stops.
 
 ```bash
-oniongate host temp --local-port 3000
-oniongate host temp --local-port 3000 --onion-port 8080
-oniongate host temp --local-port 3000 --public
+oniongate-cli host temp --local-port 3000
+oniongate-cli host temp --local-port 3000 --onion-port 8080
+oniongate-cli host temp --local-port 3000 --public
 ```
 
 Unlike permanent creation, temporary creation requires a live TCP listener on
@@ -142,12 +143,12 @@ a client's `.auth_private` file.
 
 The service remains loaded in Tor until Tor stops, but the standalone CLI does
 not persist its metadata or credential. Save the printed address/credential
-securely. `oniongate stop` stops Tor and irreversibly destroys the service.
+securely. `oniongate-cli stop` stops Tor and irreversibly destroys the service.
 
 ### Delete a site
 
 ```bash
-oniongate host rm blog
+oniongate-cli host rm blog
 ```
 
 This destroys the key. The address cannot be recovered.
@@ -155,7 +156,7 @@ This destroys the key. The address cannot be recovered.
 ### Audit a site
 
 ```bash
-oniongate host audit blog
+oniongate-cli host audit blog
 ```
 
 Reports listener scope, whether the descriptor is published, latency, HTTP
@@ -173,18 +174,18 @@ client instead.
 ## Client authorization
 
 ```bash
-oniongate host auth ls blog              # list credential names
-oniongate host auth add blog alice       # issue a credential for "alice"
-oniongate host auth rm blog alice        # revoke just alice
-oniongate host auth on blog              # require authorization
-oniongate host auth off blog             # make the site public
+oniongate-cli host auth ls blog              # list credential names
+oniongate-cli host auth add blog alice       # issue a credential for "alice"
+oniongate-cli host auth rm blog alice        # revoke just alice
+oniongate-cli host auth on blog              # require authorization
+oniongate-cli host auth off blog             # make the site public
 ```
 
 `auth add` prints the credential on **stdout** and the explanatory note on
 stderr, so you can capture just the secret:
 
 ```bash
-oniongate host auth add blog alice > alice.auth_private
+oniongate-cli host auth add blog alice > alice.auth_private
 ```
 
 Wait until `host ls` shows the hostname first. If Tor has not written the
@@ -211,11 +212,10 @@ changing it would not be expected to change the key or onion address.
 
 ## Desktop-only operations
 
-The current CLI has no commands for TUN, the firewall kill switch, system proxy,
-selected-app routing, leak-report export, bridge scanning, workstation
-Checkup/Harden/Startup Items, or Emergency Restore. `settings` can display
-their saved preferences but does not apply those live boundaries. Helper
-install and removal are `oniongate helper start` / `stop`.
+The current CLI has no commands for selected-app routing, leak-report export,
+bridge scanning, or workstation Checkup/Harden/Startup Items. `start` applies
+the saved TUN, kill-switch, and system-proxy settings. Helper install and
+removal are `oniongate-cli helper start` / `stop`.
 
 ## Scripting example
 
@@ -225,12 +225,12 @@ Publish a site and wait for it to be reachable:
 #!/usr/bin/env bash
 set -euo pipefail
 
-oniongate start
-oniongate host add blog --local-port 3000 --public
+oniongate-cli start
+oniongate-cli host add blog --local-port 3000 --public
 
-until oniongate host audit blog | grep -q '^published=true'; do
+until oniongate-cli host audit blog | grep -q '^published=true'; do
   sleep 5
 done
 
-oniongate host ls
+oniongate-cli host ls
 ```

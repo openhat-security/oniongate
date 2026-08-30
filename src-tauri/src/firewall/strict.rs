@@ -52,8 +52,8 @@ pub fn pf_udp_ipv6_rules() -> String {
 pass out quick on lo0 all
 pass out quick to 127.0.0.1
 pass out quick to ::1
-block drop log out quick inet6 from any to any
-block drop log out quick proto udp from any to any
+block drop out log quick inet6 from any to any
+block drop out log quick proto udp from any to any
 "
     .into()
 }
@@ -81,7 +81,7 @@ pass out quick to fe80::/10\n",
     for ip in endpoints.iter().chain(exceptions.iter()) {
         rules.push_str(&format!("pass out proto tcp to {ip}\n"));
     }
-    rules.push_str("block drop log out quick from any to any\n");
+    rules.push_str("block drop out log quick from any to any\n");
     rules
 }
 
@@ -170,7 +170,7 @@ mod tests {
         assert!(rules.contains("pass out quick on lo0 all"));
         assert!(rules.contains("pass out log proto udp from any port 68 to any port 67"));
         assert!(rules.contains("pass out proto tcp to 198.51.100.10"));
-        assert!(rules.contains("block drop log out quick from any to any"));
+        assert!(rules.contains("block drop out log quick from any to any"));
         assert!(!rules.contains("10.0.0.0/8"));
         let first_block = rules
             .lines()
@@ -206,5 +206,34 @@ mod tests {
             .map(|i| format!("198.51.100.{}", i % 250 + 1))
             .collect();
         assert!(parse_ip_list(&many, MAX_ENDPOINTS).is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn generated_rules_are_valid_pfctl_syntax() {
+        let ip: IpAddr = "198.51.100.10".parse().unwrap();
+        for (label, rules) in [
+            ("udp/ipv6", pf_udp_ipv6_rules()),
+            ("strict", pf_strict_rules(&[ip], &[], false)),
+            ("strict+lan", pf_strict_rules(&[ip], &[], true)),
+            ("boot-lock", pf_strict_rules(&[], &[], false)),
+        ] {
+            let path = std::env::temp_dir().join(format!(
+                "oniongate-pf-syntax-{}-{}",
+                std::process::id(),
+                label.replace('/', "-")
+            ));
+            std::fs::write(&path, &rules).unwrap();
+            let out = std::process::Command::new("/sbin/pfctl")
+                .args(["-nf", &path.to_string_lossy()])
+                .output()
+                .expect("pfctl");
+            let err = String::from_utf8_lossy(&out.stderr);
+            let _ = std::fs::remove_file(&path);
+            assert!(
+                !err.contains("syntax error"),
+                "{label} rejected by pfctl:\n{err}\n{rules}"
+            );
+        }
     }
 }

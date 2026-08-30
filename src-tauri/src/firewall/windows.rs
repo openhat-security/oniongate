@@ -3,6 +3,8 @@ use std::process::Stdio;
 
 use tokio::process::Command;
 
+use crate::win_console::HideConsole;
+
 use super::{FirewallStatus, NetworkLockStatus};
 
 const RULE: &str = "OnionGate UDP Internet Guard";
@@ -26,6 +28,7 @@ fn rule_enabled(name: &str) -> Option<bool> {
     );
     let output = std::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .hide_console()
         .output();
     output
         .ok()
@@ -245,12 +248,13 @@ fn lock_disable_script() -> String {
 async fn run_admin(script: &str) -> Result<(), String> {
     let escaped = script.replace('\'', "''");
     let command = format!(
-        "Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList '-NoProfile','-NonInteractive','-Command','{escaped}'"
+        "Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-Command','{escaped}'"
     );
     let status = Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", &command])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        .hide_console()
         .status()
         .await
         .map_err(|e| e.to_string())?;

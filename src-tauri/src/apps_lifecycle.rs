@@ -6,13 +6,15 @@
 use std::collections::HashSet;
 #[cfg(target_os = "macos")]
 use std::fs;
-use std::path::Path;
-#[cfg(target_os = "macos")]
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::process::Command as StdCommand;
+use std::sync::{LazyLock, Mutex};
 
 use serde::{Deserialize, Serialize};
+
+#[cfg(target_os = "windows")]
+use crate::win_console::HideConsole;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuitAppsResult {
@@ -27,6 +29,7 @@ fn protected_names() -> Vec<&'static str> {
         "OnionGate",
         "tor-socks-gui",
         "oniongate",
+        "oniongate-cli",
         "oniongate_helper",
         "oniongate-helper",
         "Finder",
@@ -394,6 +397,7 @@ fn helper_signal_stop(pid: u32) -> Result<(), String> {
         let pid_s = pid.to_string();
         let status = std::process::Command::new("taskkill.exe")
             .args(["/PID", &pid_s, "/T", "/F"])
+            .hide_console()
             .status()
             .map_err(|e| e.to_string())?;
         if status.success() {
@@ -458,7 +462,10 @@ pub async fn kill_clearnet_processes() -> Result<ClearnetKillResult, String> {
             }
         }
         match stop_target_logged(target.pid, &target.process).await {
-            attempt if attempt.ok => killed.push(item),
+            attempt if attempt.ok => {
+                remember_closed_app(&target.process, reopen_source(&target));
+                killed.push(item);
+            }
             _ => failed.push(item),
         }
     }
@@ -549,6 +556,9 @@ pub async fn kill_clearnet_process(pid: u32) -> Result<ProcessKillResult, String
     }
 
     let attempt = stop_target_logged(target.pid, &target.process).await;
+    if attempt.ok {
+        remember_closed_app(&target.process, reopen_source(&target));
+    }
     crate::logs::append(format!(
         "Clearnet process kill: {} pid {} — {}",
         target.process, target.pid, attempt.detail
@@ -1147,6 +1157,324 @@ async fn terminate_pid_windows_logged(pid: u32, mut lines: Vec<String>) -> KillA
     }
 }
 
+// ---------------------------------------------------------------------------
+// Memory-only reopen ledger
+// ---------------------------------------------------------------------------
+
+/// An application OnionGate closed, remembered only well enough to launch it
+/// again.
+///
+/// There is deliberately no field for arguments, environment, or a command
+/// line, and no constructor that could accept one: full process command lines
+/// must never enter storage or a report, so the type is unable to hold one.
+/// The ledger this lives in is memory-only — never settings, SQLite, logs, or
+/// an export — and is dropped on teardown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReopenableApp {
+    /// Display name, e.g. `Slack`.
+    pub label: String,
+    /// Application bundle root, e.g. `/Applications/Slack.app`.
+    pub path: String,
+}
+
+const MAX_LEDGER: usize = 64;
+
+/// Roots a reopenable application may live under. Anything else is refused
+/// rather than launched.
+const REOPEN_ROOTS: [&str; 2] = ["/Applications", "/System/Applications"];
+
+static REOPEN_LEDGER: LazyLock<Mutex<Vec<ReopenableApp>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// Strip an executable path down to its `.app` bundle root. This is also what
+/// drops any arguments that came attached to the path: everything after the
+/// bundle boundary goes away.
+fn bundle_root(path: &str) -> Option<String> {
+    let path = path.trim().trim_end_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    if let Some(bundle) = application_bundle(path) {
+        return Some(bundle);
+    }
+    let normalized = path.replace('\\', "/");
+    normalized.ends_with(".app").then_some(normalized)
+}
+
+/// A bundle path never carries an argument. Anything that looks like one means
+/// we were handed a command line, which must not be recorded at all.
+fn carries_arguments(path: &str) -> bool {
+    path.split_ascii_whitespace()
+        .any(|token| token.starts_with('-'))
+}
+
+/// Lexical policy for a reopen target, applied both when recording and when
+/// launching: absolute, no traversal, an app bundle, under an allowed root.
+fn reopen_path_policy(path: &str) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("it has no path on disk".into());
+    }
+    if path.chars().any(char::is_control) {
+        return Err("its path is not a plain filesystem path".into());
+    }
+    if carries_arguments(path) {
+        return Err("its path looks like a command line rather than a bundle".into());
+    }
+    let candidate = Path::new(path);
+    if !candidate.is_absolute() {
+        return Err("its path is not absolute".into());
+    }
+    if candidate
+        .components()
+        .any(|part| matches!(part, Component::ParentDir))
+    {
+        return Err("its path walks up out of its own directory".into());
+    }
+    if candidate.extension().and_then(|ext| ext.to_str()) != Some("app") {
+        return Err("it is not an application bundle".into());
+    }
+    if !REOPEN_ROOTS.iter().any(|root| candidate.starts_with(root)) {
+        return Err("it does not live in /Applications or /System/Applications".into());
+    }
+    Ok(())
+}
+
+/// On-disk half of the check. A symlink is refused outright rather than
+/// followed: it is the cheapest way to point a launch somewhere else.
+fn reopen_target_on_disk(target: &Path) -> Result<(), String> {
+    let meta =
+        std::fs::symlink_metadata(target).map_err(|_| "it is no longer on disk".to_string())?;
+    if meta.file_type().is_symlink() {
+        return Err("it is a symlink, and OnionGate will not follow one to launch an app".into());
+    }
+    if !meta.is_dir() {
+        return Err("it is not an application bundle".into());
+    }
+    Ok(())
+}
+
+/// Full validation. The resolved path is re-checked against the policy so a
+/// symlinked parent directory cannot land the launch outside the allowed roots.
+fn validate_reopen_target(path: &str) -> Result<PathBuf, String> {
+    reopen_path_policy(path)?;
+    let target = PathBuf::from(path);
+    reopen_target_on_disk(&target)?;
+    let resolved =
+        std::fs::canonicalize(&target).map_err(|_| "it is no longer on disk".to_string())?;
+    reopen_path_policy(&resolved.to_string_lossy())?;
+    Ok(resolved)
+}
+
+fn reopen_entry(label: &str, path: &str) -> Option<ReopenableApp> {
+    let bundle = bundle_root(path)?;
+    reopen_path_policy(&bundle).ok()?;
+    let label = match label.trim() {
+        "" => Path::new(&bundle)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())?,
+        name => name.to_string(),
+    };
+    Some(ReopenableApp {
+        label,
+        path: bundle,
+    })
+}
+
+/// De-duplicate by bundle path so closing the same app twice — once as a GUI
+/// quit, once as a clearnet kill — yields one entry.
+fn push_unique(ledger: &mut Vec<ReopenableApp>, entry: ReopenableApp) -> bool {
+    if ledger.len() >= MAX_LEDGER || ledger.iter().any(|item| item.path == entry.path) {
+        return false;
+    }
+    ledger.push(entry);
+    true
+}
+
+/// Record an application OnionGate just closed. Callers pass a display label
+/// and an executable or bundle path only; anything else is dropped on the floor.
+pub(crate) fn remember_closed_app(label: &str, path: &str) {
+    let Some(entry) = reopen_entry(label, path) else {
+        return;
+    };
+    if let Ok(mut ledger) = REOPEN_LEDGER.lock() {
+        push_unique(&mut ledger, entry);
+    }
+}
+
+/// Current ledger contents. Empty when nothing is reopenable.
+pub fn reopenable_apps() -> Vec<ReopenableApp> {
+    REOPEN_LEDGER
+        .lock()
+        .map(|ledger| ledger.clone())
+        .unwrap_or_default()
+}
+
+/// Drop the ledger. Called on teardown so a later session can never relaunch
+/// something a previous one closed.
+pub fn clear_reopen_ledger() {
+    if let Ok(mut ledger) = REOPEN_LEDGER.lock() {
+        ledger.clear();
+    }
+}
+
+fn forget_closed_app(path: &str) {
+    if let Ok(mut ledger) = REOPEN_LEDGER.lock() {
+        ledger.retain(|item| item.path != path);
+    }
+}
+
+/// The bundle location the census already resolved, falling back to the
+/// executable path.
+fn reopen_source(target: &crate::egress_watch::ClearnetProcess) -> &str {
+    if target.location.is_empty() {
+        &target.path
+    } else {
+        &target.location
+    }
+}
+
+fn phase_label(phase: crate::session::SessionPhase) -> &'static str {
+    match phase {
+        crate::session::SessionPhase::Disconnected => "disconnected",
+        crate::session::SessionPhase::Connecting => "still connecting",
+        crate::session::SessionPhase::Protected => "protected",
+        crate::session::SessionPhase::Degraded => "degraded",
+        crate::session::SessionPhase::Recovering => "recovering",
+    }
+}
+
+/// Fail closed. Putting an app back on the network while the route is
+/// unverified is exactly the leak this feature must not cause, so every
+/// uncertain state refuses.
+fn reopen_gate(
+    phase: crate::session::SessionPhase,
+    tun_mode: bool,
+    tun_live: bool,
+) -> Result<(), String> {
+    if !tun_mode {
+        return Err(
+            "Reopening apps needs TUN mode. In Proxy mode a relaunched app is not \
+                    forced through Tor, so nothing was launched."
+                .into(),
+        );
+    }
+    if !tun_live {
+        return Err(
+            "Reopening apps needs a live TUN interface. Connect first, then reopen; \
+                    nothing was launched."
+                .into(),
+        );
+    }
+    if phase != crate::session::SessionPhase::Protected {
+        return Err(format!(
+            "Reopening apps needs a verified Protected session. OnionGate is {}, \
+             so nothing was launched.",
+            phase_label(phase)
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+pub(crate) fn running_as_root() -> bool {
+    (unsafe { libc::geteuid() }) == 0
+}
+
+#[cfg(not(unix))]
+pub(crate) fn running_as_root() -> bool {
+    false
+}
+
+/// Launch a validated bundle in the caller's own GUI session. `open` hands the
+/// request to the console user's launch services; the caller has already
+/// refused to do this from a privileged process.
+async fn launch_app_bundle(bundle: &Path) -> Result<(), String> {
+    let output = tokio::process::Command::new("/usr/bin/open")
+        .arg("-a")
+        .arg(bundle)
+        .output()
+        .await
+        .map_err(|e| format!("it could not be launched: {e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(if detail.is_empty() {
+        "the system refused to launch it".into()
+    } else {
+        detail
+    })
+}
+
+fn reopen_summary(reopened: &[String], skipped: &[String]) -> String {
+    let mut parts = Vec::new();
+    if reopened.is_empty() {
+        parts.push("Reopened nothing".to_string());
+    } else {
+        parts.push(format!(
+            "Reopened {} app(s) through Tor: {}",
+            reopened.len(),
+            reopened.join(", ")
+        ));
+    }
+    if !skipped.is_empty() {
+        parts.push(format!("skipped {}: {}", skipped.len(), skipped.join("; ")));
+    }
+    parts.join(". ")
+}
+
+/// Relaunch the ledger's applications, as the console user, only while the
+/// route is verified live.
+pub async fn reopen_closed_apps() -> Result<String, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("Reopening closed applications is only supported on macOS.".into());
+    }
+    let settings = crate::settings::load();
+    reopen_gate(
+        crate::session::load().phase,
+        settings.connection_mode == "tun",
+        crate::tun::process_seems_running(),
+    )?;
+    // A GUI app launched from a privileged context would run as root for the
+    // rest of its life. Refuse rather than drop privileges by hand.
+    if running_as_root() {
+        return Err(
+            "Refusing to relaunch an application from a privileged process. Restart OnionGate \
+             as your own user and try again."
+                .into(),
+        );
+    }
+
+    let targets = reopenable_apps();
+    if targets.is_empty() {
+        return Ok("No closed applications to reopen.".into());
+    }
+
+    let mut reopened = Vec::new();
+    let mut skipped = Vec::new();
+    for target in targets {
+        let outcome = match validate_reopen_target(&target.path) {
+            Ok(resolved) => launch_app_bundle(&resolved).await,
+            Err(reason) => Err(reason),
+        };
+        match outcome {
+            Ok(()) => {
+                forget_closed_app(&target.path);
+                reopened.push(target.label);
+            }
+            Err(reason) => skipped.push(format!("{} — {reason}", target.label)),
+        }
+    }
+
+    // Counts only: the ledger's contents are memory-only and stay out of logs.
+    crate::logs::append(format!(
+        "Reopen closed apps: {} launched, {} skipped",
+        reopened.len(),
+        skipped.len()
+    ));
+    Ok(reopen_summary(&reopened, &skipped))
+}
+
 /// Quit foreground user applications. Never touches OnionGate or core OS UI.
 pub async fn quit_user_applications() -> Result<QuitAppsResult, String> {
     #[cfg(target_os = "macos")]
@@ -1174,29 +1502,40 @@ async fn quit_macos() -> Result<QuitAppsResult, String> {
         .map(|s| format!("\"{s}\""))
         .collect::<Vec<_>>()
         .join(", ");
+    // Each closed row is `name<tab>bundle path`. The path is what makes the app
+    // reopenable later; it is never joined with arguments of any kind.
     let script = format!(
         r#"
-set closedNames to {{}}
+set closedRows to {{}}
 set skippedNames to {{}}
 set protect to {{{skip}}}
 tell application "System Events"
-    set procs to name of every process whose background only is false
+    set procRows to {{}}
+    repeat with p in (every process whose background only is false)
+        set procName to name of p
+        set procPath to ""
+        try
+            set procPath to POSIX path of (application file of p)
+        end try
+        set end of procRows to {{procName, procPath}}
+    end repeat
 end tell
-repeat with procName in procs
-    set n to procName as text
+repeat with row in procRows
+    set n to (item 1 of row) as text
+    set pth to (item 2 of row) as text
     if n is in protect then
         set end of skippedNames to n
     else
         try
             tell application n to quit
-            set end of closedNames to n
+            set end of closedRows to (n & tab & pth)
         on error
             set end of skippedNames to n
         end try
     end if
 end repeat
 set AppleScript's text item delimiters to linefeed
-return (closedNames as text) & "|||" & (skippedNames as text)
+return (closedRows as text) & "|||" & (skippedNames as text)
 "#
     );
     let output = tokio::process::Command::new("osascript")
@@ -1213,8 +1552,12 @@ return (closedNames as text) & "|||" & (skippedNames as text)
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let mut parts = text.trim().splitn(2, "|||");
-    let closed = split_names(parts.next().unwrap_or(""));
+    let rows = split_closed_rows(parts.next().unwrap_or(""));
     let skipped = split_names(parts.next().unwrap_or(""));
+    for (name, path) in &rows {
+        remember_closed_app(name, path);
+    }
+    let closed: Vec<String> = rows.into_iter().map(|(name, _)| name).collect();
     let requested = closed.len();
     crate::logs::append(format!(
         "Quit {requested} foreground app(s) before connect; skipped {}",
@@ -1302,6 +1645,7 @@ $closed -join "`n"
     );
     let output = tokio::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .hide_console()
         .output()
         .await
         .map_err(|e| e.to_string())?;
@@ -1326,6 +1670,20 @@ fn split_names(raw: &str) -> Vec<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+        .collect()
+}
+
+/// Parse `name<tab>bundle path` rows. A row without a tab is a bare name, which
+/// keeps the older single-column output working.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn split_closed_rows(raw: &str) -> Vec<(String, String)> {
+    raw.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| match line.split_once('\t') {
+            Some((name, path)) => (name.trim().to_string(), path.trim().to_string()),
+            None => (line.to_string(), String::new()),
+        })
         .collect()
 }
 
@@ -1434,6 +1792,213 @@ mod tests {
         assert_eq!(
             join_log(&["Stopping Slack (pid 9)".into()]),
             "Stopping Slack (pid 9)\n"
+        );
+    }
+
+    #[test]
+    fn ledger_records_only_a_label_and_a_bundle_path() {
+        let entry = reopen_entry(
+            "Slack",
+            "/Applications/Slack.app/Contents/MacOS/Slack --user-data-dir=/tmp/profile \
+             --auth-token=s3cr3t",
+        )
+        .expect("bundle entry");
+        assert_eq!(entry.label, "Slack");
+        assert_eq!(entry.path, "/Applications/Slack.app");
+
+        // The serialized shape is the ledger's whole contract with the UI: two
+        // string fields, and no room for argv, environment, or a command line.
+        let json = serde_json::to_value(&entry).unwrap();
+        let object = json.as_object().expect("object");
+        assert_eq!(object.len(), 2);
+        assert!(object.contains_key("label"));
+        assert!(object.contains_key("path"));
+        let raw = serde_json::to_string(&entry).unwrap();
+        assert!(!raw.contains("s3cr3t"));
+        assert!(!raw.contains("--"));
+        assert!(!raw.contains("profile"));
+    }
+
+    #[test]
+    fn ledger_refuses_paths_that_are_really_command_lines() {
+        // A trailing argument that itself ends in `.app` must not be mistaken
+        // for the bundle to remember.
+        assert_eq!(
+            reopen_entry(
+                "Real",
+                "/Applications/Real.app --secret=/Applications/Fake.app"
+            ),
+            None
+        );
+        assert_eq!(
+            reopen_entry("Foo", "/usr/bin/foo --dir=/tmp/evil.app"),
+            None
+        );
+        assert_eq!(reopen_entry("Nothing", ""), None);
+        // A plain daemon with no bundle is not reopenable.
+        assert_eq!(reopen_entry("apsd", "/usr/libexec/apsd"), None);
+    }
+
+    #[test]
+    fn ledger_names_an_app_from_its_bundle_when_the_label_is_empty() {
+        let entry = reopen_entry(
+            "",
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        )
+        .expect("bundle entry");
+        assert_eq!(entry.label, "Google Chrome");
+        assert_eq!(entry.path, "/Applications/Google Chrome.app");
+        // A trailing slash (AppleScript's `POSIX path of`) still resolves.
+        let entry = reopen_entry("Mail", "/System/Applications/Mail.app/").expect("bundle entry");
+        assert_eq!(entry.path, "/System/Applications/Mail.app");
+    }
+
+    #[test]
+    fn ledger_dedupes_by_bundle() {
+        let mut ledger = Vec::new();
+        let slack = reopen_entry("Slack", "/Applications/Slack.app/Contents/MacOS/Slack").unwrap();
+        // Same app closed twice: once as a GUI quit, once as a clearnet kill.
+        let again = reopen_entry("Slack", "/Applications/Slack.app").unwrap();
+        assert!(push_unique(&mut ledger, slack));
+        assert!(!push_unique(&mut ledger, again));
+        assert_eq!(ledger.len(), 1);
+
+        let other = reopen_entry("Discord", "/Applications/Discord.app").unwrap();
+        assert!(push_unique(&mut ledger, other));
+        assert_eq!(ledger.len(), 2);
+    }
+
+    /// Exercises the real process-wide ledger. No other test touches it, so the
+    /// parallel test runner cannot interleave here.
+    #[test]
+    fn ledger_is_memory_only_and_clears_on_teardown() {
+        clear_reopen_ledger();
+        assert!(reopenable_apps().is_empty());
+        remember_closed_app(
+            "Slack",
+            "/Applications/Slack.app/Contents/MacOS/Slack --token=abc",
+        );
+        remember_closed_app("Slack", "/Applications/Slack.app");
+        assert_eq!(reopenable_apps().len(), 1);
+        assert_eq!(reopenable_apps()[0].path, "/Applications/Slack.app");
+        remember_closed_app("apsd", "/usr/libexec/apsd");
+        assert_eq!(reopenable_apps().len(), 1);
+        clear_reopen_ledger();
+        assert!(reopenable_apps().is_empty());
+    }
+
+    #[test]
+    fn reopen_refuses_unless_protected_over_live_tun() {
+        use crate::session::SessionPhase;
+
+        assert!(reopen_gate(SessionPhase::Protected, true, true).is_ok());
+
+        // Proxy mode: a relaunched app would not be forced through Tor.
+        let err = reopen_gate(SessionPhase::Protected, false, true).expect_err("proxy mode");
+        assert!(err.contains("TUN mode"));
+
+        // TUN configured but sing-box is not up.
+        let err = reopen_gate(SessionPhase::Protected, true, false).expect_err("tun down");
+        assert!(err.contains("live TUN"));
+
+        // Every non-Protected phase refuses, including the ones that look close.
+        for phase in [
+            SessionPhase::Disconnected,
+            SessionPhase::Connecting,
+            SessionPhase::Degraded,
+            SessionPhase::Recovering,
+        ] {
+            let err = reopen_gate(phase, true, true).expect_err("unverified phase");
+            assert!(err.contains("verified Protected"), "{err}");
+            assert!(err.contains("nothing was launched"), "{err}");
+        }
+    }
+
+    #[test]
+    fn reopen_refuses_relative_traversing_and_out_of_tree_paths() {
+        assert!(reopen_path_policy("/Applications/Slack.app").is_ok());
+        assert!(reopen_path_policy("/System/Applications/Mail.app").is_ok());
+
+        let err = reopen_path_policy("Applications/Slack.app").expect_err("relative");
+        assert!(err.contains("not absolute"));
+
+        let err = reopen_path_policy("/Applications/../Users/me/Evil.app").expect_err("traversal");
+        assert!(err.contains("walks up"));
+
+        let err = reopen_path_policy("/Users/me/Downloads/Evil.app").expect_err("outside");
+        assert!(err.contains("/Applications"));
+
+        let err = reopen_path_policy("/tmp/Evil.app").expect_err("outside");
+        assert!(err.contains("/Applications"));
+
+        let err = reopen_path_policy("/Applications/Slack.app/Contents/MacOS/Slack")
+            .expect_err("not a bundle");
+        assert!(err.contains("not an application bundle"));
+
+        let err = reopen_path_policy("/Applications/Slack\n.app").expect_err("control char");
+        assert!(err.contains("plain filesystem path"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reopen_refuses_a_symlinked_bundle() {
+        let root =
+            std::env::temp_dir().join(format!("oniongate-reopen-symlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let real = root.join("Real.app");
+        std::fs::create_dir_all(&real).expect("temp bundle");
+        let link = root.join("Linked.app");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+
+        assert!(reopen_target_on_disk(&real).is_ok());
+        let err = reopen_target_on_disk(&link).expect_err("symlink");
+        assert!(err.contains("symlink"), "{err}");
+
+        // A plain file is not a bundle either.
+        let file = root.join("Fake.app");
+        std::fs::write(&file, b"not a bundle").expect("temp file");
+        let err = reopen_target_on_disk(&file).expect_err("file");
+        assert!(err.contains("not an application bundle"), "{err}");
+
+        let err = reopen_target_on_disk(&root.join("Gone.app")).expect_err("missing");
+        assert!(err.contains("no longer on disk"), "{err}");
+
+        // Full validation refuses the temp tree outright: it is out of tree.
+        let err = validate_reopen_target(&link.to_string_lossy()).expect_err("out of tree");
+        assert!(err.contains("/Applications"), "{err}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn reopen_summary_names_what_was_skipped_and_why() {
+        assert_eq!(
+            reopen_summary(&["Slack".into()], &[]),
+            "Reopened 1 app(s) through Tor: Slack"
+        );
+        let summary = reopen_summary(
+            &["Slack".into()],
+            &["Evil — it is a symlink, and OnionGate will not follow one to launch an app".into()],
+        );
+        assert!(summary.contains("Reopened 1 app(s) through Tor: Slack"));
+        assert!(summary.contains("skipped 1"));
+        assert!(summary.contains("it is a symlink"));
+        assert_eq!(
+            reopen_summary(&[], &["Evil — it is not an application bundle".into()]),
+            "Reopened nothing. skipped 1: Evil — it is not an application bundle"
+        );
+    }
+
+    #[test]
+    fn closed_rows_split_name_from_bundle_path() {
+        let rows = split_closed_rows("Slack\t/Applications/Slack.app/\nDiscord\t\nNotes");
+        assert_eq!(
+            rows,
+            vec![
+                ("Slack".to_string(), "/Applications/Slack.app/".to_string()),
+                ("Discord".to_string(), String::new()),
+                ("Notes".to_string(), String::new()),
+            ]
         );
     }
 }

@@ -17,9 +17,14 @@ operations. Tor, sing-box, and pluggable transports run as local sidecars.
    pinned in `scripts/dependencies.sha256`.
 5. **Privileged helper** is an optional root service reached over a local Unix
    socket or Windows named pipe. Its request enum is typed only: ping, kill
-   switch, transition lock, macOS deny harvest, terminate pid, and stop
-   application. It cannot accept command text, paths, or caller-supplied rules.
-   On macOS a signed helper also checks the peer's code signature.
+   switch, transition lock, macOS deny harvest, terminate pid, stop application,
+   TUN start/stop, MAC randomization, and Wi-Fi power. It cannot accept command
+   text, paths, or caller-supplied rules. A helper-backed TUN requires both the
+   provisioned helper and the pinned, root-owned sing-box the `.pkg` installer
+   places; the helper regenerates the config root-side and refuses a sing-box
+   that is a symlink, not root-owned, or writable by a non-root user. On macOS a
+   signed helper also checks the peer's code signature, and peer identity is
+   always taken from kernel-attested credentials, never from the request body.
 6. **Operating system / administrator** remains outside OnionGate's trust
    boundary. Without the helper, platform elevation mechanisms perform each
    privileged mutation.
@@ -30,7 +35,9 @@ the Rust core.
 
 The main-window capability grants only core window controls, native dialogs,
 signed updater access, and process restart. It does not grant Tauri shell,
-filesystem, HTTP, or arbitrary URL-opener permissions.
+filesystem, HTTP, or arbitrary URL-opener permissions. A typed
+`open_project_link` command may open only the published docs site or the
+project GitHub page in the system browser.
 
 ## Frontend organization
 
@@ -41,7 +48,8 @@ The primary navigation follows capability boundaries:
 - **Host:** temporary and permanent onion-service lifecycle;
 - **Verify:** live diagnostic checks and redacted exports;
 - **System:** macOS Checkup, Harden controls, and Startup Items;
-- **Settings:** application preferences, helper/update controls, and logs.
+- **Settings:** application preferences, About (version and project links),
+  helper/update controls, and logs.
 
 `useTorApp.ts` centralizes shared state and Tauri invocations. Page components
 do not directly construct Tor, firewall, or TUN configuration.

@@ -217,6 +217,24 @@ export function VerifyPage({ app }: { app: TorApp }) {
               {egressWatch?.bypass ?? 0} not through Tor
             </span>
           </div>
+          {app.status?.connection_filter?.supported ? (
+            <p
+              className={cn(
+                "text-xs",
+                app.status.connection_filter.unseen_bypass > 0 ||
+                  (app.status.connection_filter.required &&
+                    !app.status.connection_filter.running)
+                  ? "text-warn-strong"
+                  : "text-muted",
+              )}
+            >
+              {app.status.connection_filter.running
+                ? app.status.connection_filter.unseen_bypass > 0
+                  ? `Connection filter is up, but ${app.status.connection_filter.unseen_bypass} live clearnet flow(s) never reached it (Apple exclusion or fail-open). pf is still the packet lock.`
+                  : "Connection filter is up. Clearnet flows are dropped here; pf remains the packet lock. Apple can still hide some of its own processes."
+                : app.status.connection_filter.detail}
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-2 text-[11px] text-muted">
             <span>Through Tor {egressWatch?.through_oniongate ?? 0}</span>
             <span>Tor process {egressWatch?.tor_transport ?? 0}</span>

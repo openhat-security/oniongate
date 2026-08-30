@@ -123,7 +123,7 @@ export function AppsPage({ app }: { app: TorApp }) {
           <InfoTip
             content={
               shellProxy?.detail ??
-              "Off / Auto / Manual. Auto and Manual write /etc/tor-socks-gui/env (admin required)."
+              "Off / Auto / Manual. Auto and Manual write /etc/oniongate/env (admin required)."
             }
           />
           <p className="truncate text-xs text-muted">

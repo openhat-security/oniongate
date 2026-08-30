@@ -9,11 +9,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/irruptio-security/oniongate/releases">
-    <img src="https://img.shields.io/github/downloads/irruptio-security/oniongate/total?label=downloads" alt="Total release downloads" />
+  <a href="https://github.com/openhat-security/oniongate/releases">
+    <img src="https://img.shields.io/github/downloads/openhat-security/oniongate/total?label=downloads" alt="Total release downloads" />
   </a>
-  <a href="https://github.com/irruptio-security/oniongate">
-    <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Firruptio-security.github.io%2Foniongate%2Fmetrics%2Fclones.json" alt="Repository clones in the last 14 days" />
+  <a href="https://github.com/openhat-security/oniongate">
+    <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fopenhat-security.github.io%2Foniongate%2Fmetrics%2Fclones.json" alt="Repository clones in the last 14 days" />
   </a>
 </p>
 
@@ -22,7 +22,7 @@ Tor circuits, turns a local port into an onion site, and inspects the live
 routing and leak-prevention boundary. It bundles and manages Tor for you — no
 terminal required — and ships a headless CLI for servers and scripts.
 
-**[Read the documentation →](https://irruptio-security.github.io/oniongate/)**
+**[Read the documentation →](https://openhat-security.github.io/oniongate/)**
 
 > This project is **alpha**. It is **not** a VPN, Tor Browser, Tails, or a
 > two-machine Tor gateway, and it must not be the sole control for high-risk
@@ -104,7 +104,7 @@ OnionGate is pre-1.0. Every published build is alpha software and must not be
 relied on for high-risk activity.
 
 Download only from the
-[GitHub Releases page](https://github.com/irruptio-security/oniongate/releases),
+[GitHub Releases page](https://github.com/openhat-security/oniongate/releases),
 and verify the checksum, SBOM, and provenance before running anything.
 
 Pre-1.0 macOS and Windows builds are **not** signed with an OS vendor
@@ -116,13 +116,13 @@ Full instructions, including building from source, are in the
 
 ## Command line
 
-`oniongate` is the headless companion. It hosts onion sites on machines with no
+`oniongate-cli` is the headless companion. It hosts onion sites on machines with no
 GUI:
 
 ```bash
-oniongate start
-oniongate host add blog --local-port 3000
-oniongate host auth add blog alice
+oniongate-cli start
+oniongate-cli host add blog --local-port 3000
+oniongate-cli host auth add blog alice
 ```
 
 See the [CLI guide](docs/guide/cli.md).
@@ -169,7 +169,7 @@ Contributions are welcome under GPL-3.0. Please read
 ## Documentation
 
 The full site is at
-**[irruptio-security.github.io/oniongate](https://irruptio-security.github.io/oniongate/)**.
+**[openhat-security.github.io/oniongate](https://openhat-security.github.io/oniongate/)**.
 
 - [Getting started](docs/guide/index.md)
 - [Quick start](docs/guide/quick-start.md)
@@ -195,9 +195,21 @@ The full site is at
 
 ## License & trademark
 
-OnionGate is licensed under [GPL-3.0](LICENSE). Bundled component notices and
-corresponding-source links are in
+Copyright (C) 2026 OpenHat Security.
+
+OnionGate is licensed under [GPL-3.0](LICENSE). It comes with ABSOLUTELY NO
+WARRANTY, to the extent permitted by applicable law; you are welcome to
+redistribute it under the terms of the GNU General Public License, version 3.
+Bundled component notices and corresponding-source links are in
 [`THIRD_PARTY.md`](src-tauri/resources/licenses/THIRD_PARTY.md).
+
+Parts of the macOS hardening features are derived from term7's *MacOS Privacy
+and Security Enhancements*, Copyright (C) 2025 term7, licensed under GPL-3.0.
+Canonical repository:
+<https://codeberg.org/term7/MacOS-Privacy-and-Security-Enhancements> (GitHub
+mirror: <https://github.com/term7/MacOS-Privacy-and-Security-Enhancements>).
+Derived files carry their own modification notices; see
+[third-party software](docs/reference/third-party.md).
 
 OnionGate is an independent project — not affiliated with or endorsed by The Tor
 Project. "Tor" and the onion logo are trademarks of The Tor Project; OnionGate

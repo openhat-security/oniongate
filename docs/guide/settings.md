@@ -30,9 +30,12 @@ for you. Add them under **Apps → Split tunnel** before relying on Session Guar
 directly; proxy applications still need SOCKS hostname resolution such as
 `socks5h`.
 
-**Auto-enable system proxy** turns on the operating-system SOCKS setting after
-Tor starts successfully. It does not force applications that ignore that
-setting.
+**Auto-enable system proxy** is always applied in System proxy mode: Connect
+enables and verifies the operating-system SOCKS setting on the live
+default-route service, and fails closed if that verification does not hold.
+Turning the toggle off does not skip that step. In other modes, the toggle
+still means “also apply OS SOCKS on Connect.” It does not force applications
+that ignore the system proxy.
 
 **Auto-disable system proxy** controls the normal automatic behavior, but a full
 Disconnect or Emergency Restore always attempts to restore the proxy snapshot
@@ -47,6 +50,70 @@ recorded in the recovery journal.
   not telemetry.
 - **Language:** English is currently the only selectable complete translation.
   Other listed languages remain disabled until their UI coverage is complete.
+
+## Clearnet alerts
+
+**Clearnet alerts** pops up an always-on-top OnionGate window when a process
+opens a socket to the public Internet outside Tor while your session is
+**Protected**. It lists the offending processes and offers a one-click **Kill it
+now**.
+
+It is deliberately an in-app window, **not** a macOS notification: notification
+text is handed to Apple's notification service, which persists and syncs it off
+this device, so the name of a process that just leaked would leave OnionGate.
+The alert payload stays in process memory only.
+
+When the connection filter held the flow before it left the machine, the same
+window says the connection was **stopped**. After-the-fact detections still
+say the process already had a public socket.
+
+The alert announces each process once per session, collapses a burst into a
+single window, and never fires for system or otherwise non-killable processes.
+It only appears while Protected — a clearnet socket during connect or teardown
+is expected — and turning the setting off silences it even while protected.
+
+## Connection filter
+
+**Connection filter** (macOS) requires the Network Extension once it is
+installed. Default is on. The extension holds and drops outbound flows that
+are not already Tor. `pf` remains the packet lock. Apple can hide some of its
+own processes from the filter; that is a residual, not an Allow. A signed
+`.pkg` with a network-extension provisioning profile is required to load it.
+Unsigned debug ignores this toggle for the Protected badge.
+
+Turn the matching Harden item on to install the extension, then approve it in
+System Settings → General → Login Items & Extensions → Network Extensions.
+Unsigned and ad-hoc builds never appear in that list; they stay on `pf`.
+
+## Uninstall OnionGate
+
+The **Uninstall OnionGate** control (bottom of Settings) removes the app, its
+privileged helper, the pinned `sing-box`, the pf anchors, OnionGate's system
+SOCKS proxy settings, and the shell hooks. It keeps your data directory by
+default so a reinstall preserves permanent Onion Host addresses; a separate
+confirmation is required to purge data, which destroys those keys irreversibly.
+
+This control drives the in-bundle uninstaller that only `.pkg` installs carry.
+If you installed from the `.dmg` or from source, run
+`scripts/macos-pkg/uninstall-oniongate.sh` from the repository instead. See
+[Install → Uninstall](/guide/install#uninstall-macos).
+
+## Connect on launch
+
+**Connect on launch** starts a Tor session when OnionGate opens, instead of
+waiting for you to click Connect. It is off by default. Turn it on together
+with **Block the network at boot** and **Start OnionGate at login** (System →
+Harden) if you want no clearnet window between restarts: the boot lock holds
+the NIC closed until this session comes up. It does not run when Emergency
+Restore is waiting.
+
+## Host hardening
+
+Operating-system hardening — the recommended boot network lock, the connection
+filter, launch at login, Wi-Fi off at boot with its auto-re-enable companion,
+MAC randomization, the legacy-services and remote-CUPS switches, and the
+expanded Kill Siri watchdog — lives under the **System** tab, not here. See
+[Check and harden this machine](/guide/system).
 
 ## Snowflake volunteer
 
@@ -124,6 +191,14 @@ single “Log cleared” event.
 Logs are never uploaded automatically. Before sharing them, remove bridge lines,
 onion addresses, local paths, application identifiers, and any destination
 information. See [Local data and network activity](/reference/data-and-network).
+
+## About
+
+The sidebar and the **About** card on Preferences show the bundled application
+version (the same number as the GitHub release). **See the docs** opens the
+published guide in the system browser. **OpenHat Security** opens the OnionGate
+GitHub repository. Those two destinations are allowlisted in the Rust core; the
+UI cannot open an arbitrary URL.
 
 ## Local ports
 

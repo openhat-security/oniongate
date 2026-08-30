@@ -6,14 +6,14 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 MANIFEST="$ROOT/src-tauri/Cargo.toml"
-CLI="$ROOT/src-tauri/target/debug/oniongate"
+CLI="$ROOT/src-tauri/target/debug/oniongate-cli"
 if [[ -x "${CLI}.exe" ]]; then
   CLI="${CLI}.exe"
 fi
 
 echo "OnionGate: building daemons"
-if ! cargo build --manifest-path "$MANIFEST" --bin oniongate-helper --bin oniongate; then
-  echo "OnionGate: could not build oniongate-helper / oniongate" >&2
+if ! cargo build --manifest-path "$MANIFEST" --bin oniongate-helper --bin oniongate-cli; then
+  echo "OnionGate: could not build oniongate-helper / oniongate-cli" >&2
   exit 1
 fi
 

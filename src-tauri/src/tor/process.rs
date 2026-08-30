@@ -8,6 +8,8 @@ use std::time::Duration;
 use tokio::process::{Child, Command};
 use which::which;
 
+use crate::win_console::HideConsole;
+
 pub const SOCKS_HOST: &str = "127.0.0.1";
 pub const SOCKS_PORT: u16 = 9050;
 pub const ISOLATED_SOCKS_PORT: u16 = 9060;
@@ -333,10 +335,7 @@ pub fn dns_reachable() -> bool {
 }
 
 pub fn ensure_data_dir() -> Result<PathBuf, String> {
-    let base = dirs::data_local_dir()
-        .ok_or_else(|| "Could not resolve local data directory".to_string())?
-        .join("tor-socks-gui");
-    fs::create_dir_all(&base).map_err(|e| format!("Failed to create data dir: {e}"))?;
+    let base = crate::paths::data_dir()?;
     let data_dir = base.join("tor-data");
     fs::create_dir_all(&data_dir).map_err(|e| format!("Failed to create tor data dir: {e}"))?;
     #[cfg(unix)]
@@ -480,6 +479,7 @@ async fn stop_system_tor_service() {
             .args(["/IM", "tor.exe", "/F"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .hide_console()
             .status()
             .await;
     }
@@ -526,6 +526,7 @@ async fn spawn_managed_tor(managed: &mut Option<Child>) -> Result<(), String> {
         .arg(&torrc)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        .hide_console()
         .spawn()
         .map_err(|e| format!("Failed to spawn tor: {e}"))?;
 
@@ -664,6 +665,7 @@ pub async fn stop_tor(managed: &mut Option<Child>) -> Result<String, String> {
             .args(["/IM", "tor.exe", "/F"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .hide_console()
             .status()
             .await;
         tokio::time::sleep(Duration::from_millis(400)).await;

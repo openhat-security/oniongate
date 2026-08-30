@@ -14,6 +14,160 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-08-30
+
+### Fixed
+
+- Windows no longer flashes endless System32 console windows. Status polls,
+  the tray, the clearnet watch, Tor/TUN helpers, and firewall checks spawn
+  `powershell.exe` / `reg.exe` / `taskkill.exe` and related tools with
+  `CREATE_NO_WINDOW`, so those console-subsystem binaries stay invisible.
+- macOS `.pkg` builds no longer ship the CLI as `OnionGate`. The cargo bins
+  `OnionGate` and `oniongate` are the same file on a case-insensitive disk, so
+  the last compile overwrote the GUI; double-click printed status and quit.
+  The CLI binary is now `oniongate-cli`. Unsigned packages also ad-hoc sign the
+  app bundle so Finder can open them.
+- An unsigned macOS `.pkg` that embeds the connection filter no longer blocks
+  Protected. The filter is required only after macOS has actually loaded it.
+- Smart Connect no longer tries Snowflake under the NIC lock (no honest IP
+  allowlist) and re-arms the lock when it switches from direct Tor to bridges,
+  so the first strategy cannot pin leftover bridge IPs and then hang at 1%.
+- Unsigned macOS `.pkg` builds no longer embed the connection-filter system
+  extension. LaunchServices was stalling on an extension that cannot load, and
+  Quit ran `filter-ctl` (up to three minutes) plus helper flush on the UI
+  thread, so the app failed to open and beachballed the Mac on quit.
+- The connection-filter status no longer tells you to approve a Network
+  Extension that cannot exist on an unsigned build, and it no longer treats
+  leftover bundle files as "installed". The real pane on current macOS is
+  System Settings → General → Login Items & Extensions → Network Extensions.
+
+### Added
+
+- macOS **connection filter** (Network Extension): LuLu-style hold-and-drop for
+  outbound flows that are not already Tor. Default verdict is drop. The in-app
+  alert says the connection was stopped. pf/TUN stay the fail-closed lock.
+  Apple can hide some of its own processes from the filter, and a crashed or
+  flooded filter can fail open — Connect then reports Degraded, not Protected.
+  Loading it needs a signed build with a network-extension profile and approval
+  in System Settings. Unsigned debug stays on pf and the after-the-fact watch.
+- macOS **Block the network at boot**: a root LaunchDaemon that default-denies
+  every outbound NIC path at the next restart until you Connect. The setup
+  wizard, Home, and Harden recommend it with Start OnionGate at login and
+  **Connect on launch** when you want no clearnet window between startups.
+  Wi-Fi off at boot remains an anti-probe control and does not cover Ethernet.
+- macOS `.pkg` installer, now the primary download. It registers the privileged
+  helper at install time so the app is prompt-free from first launch, installs a
+  root-owned copy of sing-box at a fixed path, clears any leftover download
+  quarantine, and pins the app to `/Applications`. `make macos-pkg` rebuilds it
+  locally. `make macos-reinstall` uninstalls whatever is on the Mac, rebuilds
+  that package, and installs it so Connect can be tested without leftover
+  helper state. The rebuild uses `--bundles app` so a local DMG failure cannot
+  abort the installer.
+- `make macos-uninstall` removes the installed app, privileged helper, pinned
+  sing-box, hardening daemons, and leftover helper support files. Settings and
+  onion keys stay unless `PURGE_DATA=1`.
+- In-bundle uninstaller (macOS `.pkg` only) reachable from **Settings →
+  Uninstall OnionGate**. It removes the app, the privileged helper, the pinned
+  sing-box, the firewall anchors, OnionGate's proxy settings, and the shell
+  hooks; a separate `--purge-data` guard is required to also delete the data
+  directory, including permanent onion keys.
+- Prompt-free TUN through the privileged helper: when the helper is live,
+  OnionGate skips the connect-time administrator prompt and starts sing-box
+  through the helper instead.
+- Reopen-through-Tor: relaunch applications OnionGate closed, from a memory-only
+  ledger that keeps only a display label and the bundle path. It is refused
+  unless the session is verified Protected over a live TUN, and the apps are
+  always relaunched as the console user, never root.
+- In-app clearnet alert window that warns when a process reaches the network
+  outside Tor while Protected and offers a one-click kill, plus a **Clearnet
+  alerts** setting to turn it off.
+- Host-hardening controls: start OnionGate at login, turn Wi-Fi off at boot
+  (with an optional auto re-enable once the session is Protected), randomize the
+  Wi-Fi MAC address, disable the legacy TFTP/Telnet/FTP servers, disable remote
+  printing and CUPS administration, and an expanded Kill Siri watchdog.
+- Sidebar and Settings show the bundled version and release channel, the
+  GPL-3.0 licence notice with a licence link and third-party credits (including
+  term7's GPL-3.0 hardening work), and **See the docs** / **OpenHat Security**
+  links.
+
+### Changed
+
+- Retired the internal `tor-socks-gui` name. The GUI binary is `OnionGate`, the
+  crate and data directory are `oniongate`, and shell hooks live under
+  `/etc/oniongate`. The first launch migrates the previous data directory in
+  place so settings and permanent onion keys are not orphaned. When both
+  names exist, leftover settings and unique site directories are merged
+  into `oniongate` (current wins on conflict) on every launch, so an old
+  binary that still writes the previous name is absorbed. Disable paths
+  still flush the old pf/nft names so a leftover lock cannot stay up.
+- `oniongate start` now runs the same protected-session bring-up as the
+  desktop app (managed Tor, OS SOCKS or TUN, kill switch).
+  `oniongate emergency-restore` restores host defaults from the journal.
+- `make macos-pkg-install` opens the built `.pkg` in Installer.app (welcome,
+  license, Install) instead of running the silent `installer` CLI, so a local
+  install is the same product a download user sees.
+- The macOS `.dmg` is now a secondary download; the `.pkg` is preferred.
+- Minimum supported macOS raised to 10.15.
+- Renamed the project organization to openhat-security and updated the updater
+  endpoint and project metadata to match.
+- The privileged helper generates and validates its own sing-box config
+  root-side from typed routing intent instead of loading a client-authored
+  config, and stops the tunnel by matching sing-box on its resolved executable
+  rather than a command-line pattern.
+- Bundled runtime and vendor directories are gitignored and never committed.
+
+### Fixed
+
+- System proxy mode now always enables and verifies OS SOCKS on the live
+  default-route network service, instead of treating that as an opt-in or
+  reporting leftover settings on another interface as enabled. A failed
+  apply or verify restores the previous SOCKS settings immediately instead
+  of leaving a partial apply until Disconnect.
+- On macOS, if user-level `networksetup` cannot apply SOCKS, Connect asks
+  the privileged helper. The helper resolves services itself and only
+  points SOCKS at the local Tor listener. If the helper is not running,
+  Connect fails closed.
+- Proxy mode no longer reports Protected while known SOCKS-ignoring apps
+  (Chrome, Discord, Slack, or an unconfigured Firefox/editor) are running
+  and the NIC lock is off. The session stays Degraded until those apps
+  quit, Apps helpers are applied, or TUN / NIC lock is used.
+- macOS network lock now generates pf syntax this OS accepts (`block drop out
+  log quick` instead of `block drop log out quick`) and loads the rules under
+  `com.apple/oniongate.*`, the only anchor the stock `/etc/pf.conf` evaluates.
+  A syntax error there was aborting Connect with “pfctl load failed”.
+- Kill Siri now targets the Siri/Assistant agents by the correct per-user id,
+  fixing a bug that used the wrong uid.
+- macOS helper install accepts the ad-hoc `OnionGate` product identifier used
+  by unsigned release builds, so Settings / `oniongate helper start` no longer
+  refuse with “unexpected signed app”.
+- The privileged helper now recognizes rustc’s linker-signed identifiers
+  (`tor_socks_gui-<hash>`, `oniongate-<hash>`) and the app bundle’s
+  `CFBundleIdentifier`, so Connect no longer fail-closes with “unauthorized
+  peer” against an unsigned `/Applications/OnionGate.app`. The console user is
+  re-read on each connection so a helper started at boot cannot stay locked to
+  root.
+
+### Security
+
+- MAC randomization draws a locally-administered, unicast address from the
+  system CSPRNG and has no fallback that could assign a real vendor OUI; the
+  address is never logged or exported.
+- The privileged helper refuses oversized or otherwise invalid routing requests
+  and execs only the pinned, root-owned sing-box, rejecting one that is a
+  symlink, not root-owned, or writable by a non-root user.
+- The Wi-Fi-off-at-boot LaunchDaemon runs a root-owned script from a root-owned
+  directory, never a user-writable path.
+- Clearnet alerts stay in an in-app window instead of a macOS notification, and
+  the reopen ledger records no command line, so a leaking process name or an
+  application's arguments are never handed to Apple's notification service or
+  written to disk.
+
+### Known limitations
+
+- This remains a 0.x alpha. Apple notarization and Authenticode are still
+  optional, and the reopen, uninstaller, and host-hardening features are
+  macOS-only. Do not treat it as a sole control for high-risk work.
+
 ## [0.2.3] - 2026-08-14
 
 ### Fixed

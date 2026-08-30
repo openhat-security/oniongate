@@ -19,7 +19,7 @@ hero:
       link: /guide/hosting
     - theme: alt
       text: View on GitHub
-      link: https://github.com/irruptio-security/oniongate
+      link: https://github.com/openhat-security/oniongate
 
 features:
   - title: Per-app Tor circuits

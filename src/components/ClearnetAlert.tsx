@@ -6,19 +6,26 @@ export function ClearnetAlert({
   processes,
   busy,
   showReview,
+  tunRoute,
   onKill,
+  onKillAndReopen,
   onReview,
   onDismiss,
 }: {
   processes: ClearnetProcess[];
   busy: boolean;
   showReview: boolean;
+  /** Reopening only routes an app through Tor under TUN, so the action hides otherwise. */
+  tunRoute?: boolean;
   onKill: () => void;
+  onKillAndReopen?: () => void;
   onReview?: () => void;
   onDismiss: () => void;
 }) {
+  const held = processes.some((item) => item.held);
   const killable = processes.filter((item) => item.killable);
   const protectedCount = processes.length - killable.length;
+  const canReopen = !!tunRoute && !!onKillAndReopen;
 
   return (
     <div
@@ -32,13 +39,12 @@ export function ClearnetAlert({
           id="clearnet-alert-title"
           className="text-base font-semibold tracking-tight"
         >
-          Processes not through Tor
+          {held ? "Connections stopped" : "Processes not through Tor"}
         </h2>
         <p className="mt-2 text-sm text-muted">
-          These processes currently have public Internet sockets that are not
-          using OnionGate. Killing them, then requesting a new identity,
-          drops leftover sessions before circuits rotate. OnionGate, Tor, and
-          core system processes are left running.
+          {held
+            ? "The connection filter held and dropped these outbound flows. They were not allowed onto clearnet. Killing the process stops it from retrying."
+            : "These processes currently have public Internet sockets that are not using OnionGate. Killing them, then requesting a new identity, drops leftover sessions before circuits rotate. OnionGate, Tor, and core system processes are left running."}
         </p>
         <ul className="mt-3 max-h-48 overflow-y-auto rounded-xl border border-line bg-panel-2 px-3 py-2 text-sm">
           {processes.map((item) => (
@@ -76,6 +82,21 @@ export function ClearnetAlert({
               ? "Nothing safe to kill"
               : "Kill these processes and get a new identity"}
           </Button>
+          {canReopen ? (
+            <>
+              <Button
+                variant="secondary"
+                disabled={busy || killable.length === 0}
+                onClick={onKillAndReopen}
+              >
+                Kill them and reopen through Tor
+              </Button>
+              <p className="-mt-1 text-[11px] text-muted">
+                OnionGate relaunches them only once the session is verified
+                Protected over TUN, so they come back inside the tunnel.
+              </p>
+            </>
+          ) : null}
           {showReview && onReview ? (
             <Button variant="secondary" disabled={busy} onClick={onReview}>
               Review on Verify

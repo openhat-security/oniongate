@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Do **not** report security vulnerabilities here. Use a private
-        [GitHub Security Advisory](https://github.com/irruptio-security/oniongate/security/advisories/new)
+        [GitHub Security Advisory](https://github.com/openhat-security/oniongate/security/advisories/new)
         instead (see SECURITY.md). Never paste onion keys, bridge lines, client
         credentials, or unredacted logs.
   - type: input

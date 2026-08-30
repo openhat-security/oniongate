@@ -7,20 +7,54 @@ import { PRESETS, presetPatch, type PresetId } from "@/lib/presets";
 import { StrictLockConsent } from "@/components/DenyAlert";
 import { cn } from "@/lib/utils";
 import { startWindowDrag } from "@/lib/drag";
+import { releaseChannel } from "@/lib/release";
+import { useAppVersion } from "@/hooks/useAppVersion";
 
 const STEPS = ["Welcome", "Choose a preset", "Permissions", "Finish"];
 
 export function SetupWizard({ app }: { app: TorApp }) {
   const isMac = app.detect?.os === "macos";
+  const version = useAppVersion();
+  const channel = releaseChannel(version);
   const [step, setStep] = useState(0);
   const [preset, setPreset] = useState<PresetId>("everyday");
   const [lockConsent, setLockConsent] = useState(false);
   const [adminState, setAdminState] = useState<"idle" | "granted" | "failed">(
     "idle",
   );
+  const [bootLock, setBootLock] = useState(false);
+  const [launchAtLogin, setLaunchAtLogin] = useState(false);
+  const [connectOnLaunch, setConnectOnLaunch] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   const chosen = PRESETS.find((item) => item.id === preset);
+  const leakBetweenRestarts = preset === "maximum";
+
+  useEffect(() => {
+    if (!isMac) return;
+    setBootLock(leakBetweenRestarts);
+    setLaunchAtLogin(leakBetweenRestarts);
+    setConnectOnLaunch(leakBetweenRestarts);
+  }, [isMac, leakBetweenRestarts]);
+
+  const applyBetweenRestarts = async (next: AppSettings) => {
+    if (isMac && bootLock) {
+      await invoke<string>("apply_harden", {
+        id: "boot_network_lock",
+        enable: true,
+      });
+    }
+    if (isMac && launchAtLogin) {
+      await invoke<string>("apply_harden", {
+        id: "launch_at_login",
+        enable: true,
+      });
+    }
+    return {
+      ...next,
+      connect_on_launch: isMac ? connectOnLaunch : next.connect_on_launch,
+    };
+  };
 
   const finish = () => {
     if (preset === "maximum") {
@@ -29,12 +63,15 @@ export function SetupWizard({ app }: { app: TorApp }) {
     }
     void app.run(async () => {
       if (app.settings) {
-        await invoke<AppSettings>("update_settings", {
-          next: { ...app.settings, ...presetPatch(preset) },
+        const next = await applyBetweenRestarts({
+          ...app.settings,
+          ...presetPatch(preset),
         });
+        await invoke<AppSettings>("update_settings", { next });
       }
       await invoke<AppSettings>("set_setup_complete", { done: true });
       await app.refreshSettings();
+      await app.refreshHarden();
       return `Setup complete — applied the ${chosen?.label ?? preset} preset`;
     });
   };
@@ -42,12 +79,15 @@ export function SetupWizard({ app }: { app: TorApp }) {
   const finishMaximum = () =>
     void app.run(async () => {
       if (app.settings) {
-        await invoke<AppSettings>("update_settings", {
-          next: { ...app.settings, ...presetPatch("maximum") },
+        const next = await applyBetweenRestarts({
+          ...app.settings,
+          ...presetPatch("maximum"),
         });
+        await invoke<AppSettings>("update_settings", { next });
       }
       await invoke<AppSettings>("set_setup_complete", { done: true });
       await app.refreshSettings();
+      await app.refreshHarden();
       return "Setup complete — applied Maximum Isolation";
     });
 
@@ -160,7 +200,7 @@ export function SetupWizard({ app }: { app: TorApp }) {
                 live routing and leak-prevention boundary.
               </p>
               <p className="rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-muted">
-                This build is <span className="font-semibold text-ink">alpha</span> — not
+                This build is <span className="font-semibold text-ink">{channel}</span> — not
                 a sole control for high-risk work. It is not a VPN, Tor Browser, or
                 antivirus. Read the threat model and residual leaks before relying on
                 it. This wizard sets defaults you can change anytime.
@@ -268,6 +308,51 @@ export function SetupWizard({ app }: { app: TorApp }) {
                 After connecting, open <span className="font-medium text-ink">Verify</span>{" "}
                 to inspect egress, DNS, and the live protection controls.
               </p>
+              {isMac ? (
+                <div className="space-y-2 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2">
+                  <div className="text-[13px] font-semibold">
+                    Recommended: no clearnet between restarts
+                  </div>
+                  <p className="text-[11px] leading-tight text-muted">
+                    OnionGate does not lock this Mac at power-on. Until you
+                    Connect, Ethernet and Wi‑Fi can leak. These take effect at
+                    the next boot and need administrator access.
+                  </p>
+                  <label className="flex items-start gap-2 text-[12px]">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={bootLock}
+                      onChange={(event) => setBootLock(event.target.checked)}
+                    />
+                    <span>
+                      Block the network at boot (Wi‑Fi, Ethernet, USB)
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 text-[12px]">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={launchAtLogin}
+                      onChange={(event) =>
+                        setLaunchAtLogin(event.target.checked)
+                      }
+                    />
+                    <span>Start OnionGate at login</span>
+                  </label>
+                  <label className="flex items-start gap-2 text-[12px]">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={connectOnLaunch}
+                      onChange={(event) =>
+                        setConnectOnLaunch(event.target.checked)
+                      }
+                    />
+                    <span>Connect on launch</span>
+                  </label>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>

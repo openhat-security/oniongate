@@ -10,6 +10,8 @@
 #[cfg(target_os = "macos")]
 use super::HELPER_LABEL;
 use super::{client, HelperStatus};
+#[cfg(target_os = "windows")]
+use crate::win_console::HideConsole;
 
 #[allow(dead_code)]
 fn helper_binary() -> Result<std::path::PathBuf, String> {
@@ -303,6 +305,7 @@ const WINDOWS_HELPER_DEST: &str = r"C:\Program Files\OnionGate\oniongate-helper.
 fn windows_status() -> HelperStatus {
     let installed = std::process::Command::new("sc.exe")
         .args(["query", WINDOWS_SERVICE])
+        .hide_console()
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
@@ -327,10 +330,11 @@ fn run_elevated_powershell(inner: &str) -> Result<(), String> {
     // Runs `inner` in an elevated PowerShell (single UAC prompt).
     let escaped = inner.replace('\'', "''");
     let command = format!(
-        "Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList '-NoProfile','-NonInteractive','-Command','{escaped}'"
+        "Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-Command','{escaped}'"
     );
     let status = std::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", &command])
+        .hide_console()
         .status()
         .map_err(|e| e.to_string())?;
     status

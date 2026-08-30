@@ -1,4 +1,4 @@
-# Third-party runtimes bundled with Tor SOCKS Manager
+# Third-party runtimes bundled with OnionGate
 
 This application may bundle the following third-party programs. Their licenses
 apply to those components; see upstream projects for full terms and source.
