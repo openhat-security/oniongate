@@ -35,6 +35,7 @@ pub struct AppSettings {
     /// Prefer remote DNS: Tor DNSPort + socks5h / socks_remote_dns helpers.
     pub remote_dns: bool,
     /// When Tor starts successfully, also enable the system SOCKS proxy.
+    /// System proxy mode always applies OS SOCKS regardless of this toggle.
     pub auto_enable_proxy: bool,
     /// When Tor stops, disable the system SOCKS proxy (recommended).
     pub auto_disable_proxy: bool,
@@ -90,13 +91,25 @@ pub struct AppSettings {
     pub exit_nodes_fp: String,
     /// First-run setup wizard has been completed/dismissed.
     pub setup_complete: bool,
+    /// Warn when a process reaches the network outside Tor while protected.
+    pub clearnet_alerts: bool,
+    /// With Wi-Fi disabled at boot, turn the radio back on once the session
+    /// reports Protected instead of leaving it to the user.
+    pub wifi_off_at_boot_auto_reenable: bool,
+    /// After the app finishes launching, start a Tor session without waiting
+    /// for Connect. Recommended with the boot network lock so a restart is
+    /// not an offline brick.
+    pub connect_on_launch: bool,
+    /// Require the macOS connection filter (Network Extension) once it is
+    /// installed. Unsigned builds have no extension; pf stays the lock.
+    pub connection_filter: bool,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             remote_dns: true,
-            auto_enable_proxy: false,
+            auto_enable_proxy: true,
             auto_disable_proxy: true,
             log_level: "notice".into(),
             status_poll_secs: 4,
@@ -125,15 +138,16 @@ impl Default for AppSettings {
             middle_nodes: String::new(),
             exit_nodes_fp: String::new(),
             setup_complete: false,
+            clearnet_alerts: true,
+            wifi_off_at_boot_auto_reenable: true,
+            connect_on_launch: false,
+            connection_filter: true,
         }
     }
 }
 
 fn settings_path() -> Result<PathBuf, String> {
-    let base = dirs::data_local_dir()
-        .ok_or_else(|| "Could not resolve local data directory".to_string())?
-        .join("tor-socks-gui");
-    fs::create_dir_all(&base).map_err(|e| format!("Failed to create data dir: {e}"))?;
+    let base = crate::paths::data_dir()?;
     let path = base.join("settings.json");
     #[cfg(unix)]
     {
@@ -442,5 +456,15 @@ mod tests {
         assert_eq!(settings.log_level, "info");
         assert!(settings.remote_dns);
         assert_eq!(settings.connection_mode, "proxy");
+        assert!(settings.auto_enable_proxy);
+        assert!(settings.clearnet_alerts);
+        assert!(settings.wifi_off_at_boot_auto_reenable);
+        assert!(!settings.connect_on_launch);
+        assert!(settings.connection_filter);
+    }
+
+    #[test]
+    fn auto_enable_proxy_defaults_on() {
+        assert!(AppSettings::default().auto_enable_proxy);
     }
 }

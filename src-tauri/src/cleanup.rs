@@ -55,6 +55,7 @@ async fn cleanup_orphan_pts() {
     }
     #[cfg(target_os = "windows")]
     {
+        use crate::win_console::HideConsole;
         use tokio::process::Command;
         for name in [
             "lyrebird.exe",
@@ -66,6 +67,7 @@ async fn cleanup_orphan_pts() {
                 .args(["/IM", name, "/F"])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
+                .hide_console()
                 .status()
                 .await;
         }
@@ -81,6 +83,15 @@ pub async fn teardown_session(
     mode: TeardownMode,
 ) -> Result<String, String> {
     let _ = crate::session::set_phase(crate::session::SessionPhase::Recovering, None);
+    crate::ne_filter::set_session_idle();
+    if mode == TeardownMode::RestoreHost && crate::ne_filter::heartbeat_live() {
+        match crate::ne_filter::deactivate() {
+            Ok(msg) => logs::append(&msg),
+            Err(e) => logs::append(format!("Connection filter deactivate: {e}")),
+        }
+    } else if mode == TeardownMode::RestoreHost {
+        let _ = crate::session::update(|j| j.connection_filter_expected = false);
+    }
     let mut parts = Vec::new();
     let mut errors = Vec::new();
 
@@ -129,12 +140,16 @@ pub async fn teardown_session(
         }
     }
 
-    // 2) Kill switch / NIC lock — always flush when the helper is available so a
-    //    killed process cannot leave live pf without a journal. Without the
-    //    helper, only prompt when a marker or live rules say it is on.
+    // 2) Kill switch. Disconnect still flushes through the helper when it is
+    //    up so a leftover pf rule cannot outlive the journal. RestoreHost
+    //    (Quit) only talks to the helper when a marker or live rules say the
+    //    switch is on — otherwise every quit waited 20s+ on a no-op flush
+    //    and froze AppKit.
     let firewall_status = firewall::status();
-    if firewall_status.active || firewall_status.marker_active || crate::helper::client::available()
-    {
+    let flush_firewall = firewall_status.active
+        || firewall_status.marker_active
+        || (mode != TeardownMode::RestoreHost && crate::helper::client::available());
+    if flush_firewall {
         match firewall::disable_kill_switch().await {
             Ok(msg) => {
                 logs::append(&msg);
@@ -218,18 +233,27 @@ pub async fn teardown_session(
     }
 
     // 9) Clear the transition lock last — only after Tor/TUN/proxy are gone so
-    //    nothing can race onto clearnet during teardown. Always attempt: live pf
-    //    can outlive the journal after a killed process.
-    match firewall::disarm_after_transition().await {
-        Ok(msg) => {
-            logs::append(&msg);
-            parts.push(msg);
-        }
-        Err(e) => {
-            logs::append(format!("Network lock clear failed: {e}"));
-            errors.push(format!(
-                "Network lock may still be active (approve admin to clear): {e}"
-            ));
+    //    nothing can race onto clearnet during teardown. Quit skips the helper
+    //    when the lock is already down so the UI thread is not parked on IPC.
+    let lock = firewall::network_lock_status();
+    let flush_lock = lock.active
+        || lock.marker_active
+        || mode != TeardownMode::RestoreHost;
+    if !flush_lock {
+        let _ = crate::session::expect_network_lock(false);
+        logs::append("Network lock already clear");
+    } else {
+        match firewall::disarm_after_transition().await {
+            Ok(msg) => {
+                logs::append(&msg);
+                parts.push(msg);
+            }
+            Err(e) => {
+                logs::append(format!("Network lock clear failed: {e}"));
+                errors.push(format!(
+                    "Network lock may still be active (approve admin to clear): {e}"
+                ));
+            }
         }
     }
 
@@ -256,17 +280,32 @@ pub async fn teardown_session(
 }
 
 /// Best-effort sync wrapper for process exit. Restores host network defaults.
+/// Hard-capped so Quit cannot beachball the Mac if helper IPC or filter-ctl
+/// stalls (those used to wait 20–180s on the AppKit thread).
 pub fn teardown_session_blocking(
     managed_tor: &AsyncMutex<Option<Child>>,
     managed_singbox: &AsyncMutex<Option<Child>>,
     managed_snowflake: &AsyncMutex<Option<Child>>,
     saved_proxy: &Mutex<SavedProxyState>,
 ) {
-    let _ = tauri::async_runtime::block_on(teardown_session(
-        managed_tor,
-        managed_singbox,
-        managed_snowflake,
-        saved_proxy,
-        TeardownMode::RestoreHost,
-    ));
+    const QUIT_BUDGET: Duration = Duration::from_secs(4);
+    match tauri::async_runtime::block_on(async {
+        tokio::time::timeout(
+            QUIT_BUDGET,
+            teardown_session(
+                managed_tor,
+                managed_singbox,
+                managed_snowflake,
+                saved_proxy,
+                TeardownMode::RestoreHost,
+            ),
+        )
+        .await
+    }) {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => logs::append(format!("Quit teardown: {e}")),
+        Err(_) => logs::append(
+            "Quit teardown hit the 4s budget; leftover pf can be cleared with Emergency Restore",
+        ),
+    }
 }

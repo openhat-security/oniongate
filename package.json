@@ -1,16 +1,16 @@
 {
   "name": "oniongate",
   "private": true,
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "OnionGate — isolated Tor app routing, Onion Host, and leak verification",
   "license": "GPL-3.0-only",
-  "homepage": "https://irruptio-security.github.io/oniongate/",
+  "homepage": "https://openhat-security.github.io/oniongate/",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/irruptio-security/oniongate.git"
+    "url": "git+https://github.com/openhat-security/oniongate.git"
   },
   "bugs": {
-    "url": "https://github.com/irruptio-security/oniongate/issues"
+    "url": "https://github.com/openhat-security/oniongate/issues"
   },
   "type": "module",
   "engines": {

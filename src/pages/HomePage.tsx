@@ -9,6 +9,12 @@ import { Switch } from "@/components/ui/switch";
 import { InfoTip } from "@/components/ui/tooltip";
 import type { TorApp } from "@/hooks/useTorApp";
 import type { AppSettings } from "@/lib/types";
+import {
+  armReopenThroughTor,
+  disarmReopenThroughTor,
+  isTunRoute,
+  listReopenableApps,
+} from "@/lib/reopen";
 import { cn } from "@/lib/utils";
 import { effectiveLocale, translate } from "@/lib/i18n";
 
@@ -70,6 +76,11 @@ export function HomePage({
     saveSettings,
     run,
     refreshSettings,
+    harden,
+    detect,
+    setTab,
+    setSystemView,
+    setHardenFocusId,
   } = app;
 
   const [vpn, setVpn] = useState<VpnStatus | null>(null);
@@ -82,6 +93,29 @@ export function HomePage({
     setOpsecAck(false);
     void invoke<string>("disarm_network_lock").catch(() => {});
   };
+
+  // Reopening only puts an app back inside the tunnel under TUN, so the action
+  // is offered only there. The request is armed here and fired by App once the
+  // session reports verified Protected — never alongside the connect request.
+  const closeAppsAndConnect = (reopenThroughTor: boolean) =>
+    void run(async () => {
+      const quit = await invoke<{ detail: string }>("quit_user_applications");
+      if (reopenThroughTor) {
+        // The list only labels the pending banner; `reopen_closed_apps` reads
+        // the core's own ledger, so a failure here must not abort the connect.
+        armReopenThroughTor(await listReopenableApps().catch(() => []));
+      }
+      setConnectGate(null);
+      try {
+        const started = await invoke<string>("start_tor");
+        return reopenThroughTor
+          ? `${quit.detail}. ${started} They reopen through Tor once the session is verified Protected.`
+          : `${quit.detail}. ${started}`;
+      } catch (e) {
+        if (reopenThroughTor) disarmReopenThroughTor();
+        throw e;
+      }
+    });
 
   useEffect(() => {
     void invoke<VpnStatus>("detect_vpn")
@@ -104,6 +138,7 @@ export function HomePage({
   const t = (key: Parameters<typeof translate>[1]) => translate(locale, key);
 
   const mode = settings?.connection_mode === "tun" ? "tun" : "proxy";
+  const tunRoute = isTunRoute(app);
   const ipPath =
     !torOn
       ? "Direct"
@@ -126,6 +161,34 @@ export function HomePage({
 
   return (
     <section className="flex flex-col gap-3">
+      {detect?.os === "macos" &&
+      harden.some((h) => h.id === "boot_network_lock" && !h.active) ? (
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">
+              Recommended: block the network between restarts
+            </div>
+            <div className="text-xs text-muted">
+              OnionGate does not lock this Mac at power-on. Until you Connect,
+              every interface — including Ethernet — can leak. Turn on Block the
+              network at boot, start OnionGate at login, and Connect on launch
+              if you want no clearnet window between startups.
+            </div>
+          </div>
+          <Button
+            variant="secondary"
+            className="shrink-0"
+            onClick={() => {
+              setHardenFocusId("boot_network_lock");
+              setSystemView("harden");
+              setTab("system");
+            }}
+          >
+            Open Harden
+          </Button>
+        </div>
+      ) : null}
+
       {recovery?.needed ? (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-warn/50 bg-warn/10 px-4 py-3">
           <div>
@@ -245,6 +308,24 @@ export function HomePage({
           {status?.bootstrap_progress != null && torOn ? (
             <p className="mt-1 text-xs text-muted">
               Bootstrap {status.bootstrap_progress}%
+            </p>
+          ) : null}
+          {status?.connection_filter?.supported ? (
+            <p
+              className={cn(
+                "mt-2 max-w-xs text-[11px] leading-snug",
+                status.connection_filter.unseen_bypass > 0 ||
+                  (status.connection_filter.required &&
+                    !status.connection_filter.running)
+                  ? "text-warn-strong"
+                  : "text-muted",
+              )}
+            >
+              {status.connection_filter.running
+                ? status.connection_filter.unseen_bypass > 0
+                  ? `Filter up · ${status.connection_filter.unseen_bypass} Apple-hidden or fail-open flow(s)`
+                  : "Filter up. pf remains the packet lock."
+                : status.connection_filter.detail}
             </p>
           ) : null}
         </div>
@@ -464,21 +545,32 @@ export function HomePage({
                 <div className="mt-4 flex flex-col gap-2">
                   <Button
                     disabled={busy}
-                    onClick={() =>
-                      void run(
-                        async () => {
-                          const quit = await invoke<{ detail: string }>(
-                            "quit_user_applications",
-                          );
-                          setConnectGate(null);
-                          const started = await invoke<string>("start_tor");
-                          return `${quit.detail}. ${started}`;
-                        },
-                      )
-                    }
+                    onClick={() => closeAppsAndConnect(false)}
                   >
                     Close apps and connect
                   </Button>
+                  {tunRoute ? (
+                    <>
+                      <Button
+                        variant="secondary"
+                        disabled={busy}
+                        onClick={() => closeAppsAndConnect(true)}
+                      >
+                        Close apps and reopen them through Tor
+                      </Button>
+                      <p className="-mt-1 text-[11px] text-muted">
+                        OnionGate relaunches them only after the session reports
+                        verified Protected over TUN, so they come back inside the
+                        tunnel.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-[11px] text-muted">
+                      Reopening apps through Tor needs TUN mode. In proxy mode a
+                      relaunched app is not routed through Tor, so OnionGate does
+                      not offer it.
+                    </p>
+                  )}
                   <Button
                     variant="secondary"
                     disabled={busy}

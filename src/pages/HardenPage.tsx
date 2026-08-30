@@ -275,6 +275,25 @@ export function HardenPage({ app }: { app: TorApp }) {
         </div>
       ) : null}
 
+      {isMac ? (
+        <div className="rounded-xl border border-accent/40 bg-accent/10 px-3.5 py-3">
+          <div className="text-sm font-semibold text-ink">
+            Recommended between restarts
+          </div>
+          <p className="mt-1 text-xs text-muted">
+            OnionGate does not block the network at power-on. If you want no
+            clearnet between startups, turn on{" "}
+            <span className="font-medium text-ink">Block the network at boot</span>
+            {" "}
+            (covers Wi‑Fi, Ethernet, and USB),{" "}
+            <span className="font-medium text-ink">Start OnionGate at login</span>,
+            and <span className="font-medium text-ink">Connect on launch</span>{" "}
+            in Settings. Wi‑Fi off at boot only stops the radio from probing —
+            it does not cover Ethernet.
+          </p>
+        </div>
+      ) : null}
+
       {isMac && killStatus ? (
         <div className="rounded-lg border border-line bg-panel px-3 py-2 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">

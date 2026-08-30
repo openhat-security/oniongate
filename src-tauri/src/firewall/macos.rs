@@ -5,8 +5,15 @@ use tokio::process::Command;
 
 use super::{FirewallStatus, NetworkLockStatus};
 
-const KS_ANCHOR: &str = "tor.socks.gui";
-const LOCK_ANCHOR: &str = "tor.socks.gui.lock";
+// Main /etc/pf.conf only evaluates `anchor "com.apple/*"`. A top-level
+// `oniongate.lock` either fails to load or loads as an orphan that never
+// matches. These names attach to Apple's existing hook.
+const KS_ANCHOR: &str = "com.apple/oniongate.ks";
+const LOCK_ANCHOR: &str = "com.apple/oniongate.lock";
+const LEGACY_KS_ANCHOR: &str = "tor.socks.gui";
+const LEGACY_LOCK_ANCHOR: &str = "tor.socks.gui.lock";
+const LEGACY_BARE_KS_ANCHOR: &str = "oniongate.ks";
+const LEGACY_BARE_LOCK_ANCHOR: &str = "oniongate.lock";
 
 fn rules_path() -> Result<std::path::PathBuf, String> {
     let dir = crate::tor::process::ensure_data_dir()?;
@@ -43,8 +50,10 @@ fn live_anchor_blocks(anchor: &str, needle: &str) -> Option<bool> {
 pub fn status() -> FirewallStatus {
     let marker_active =
         marker_path().ok().and_then(|p| fs::read_to_string(p).ok()) == Some("1".into());
-    let live_udp = live_anchor_blocks(KS_ANCHOR, "proto udp");
-    let live_strict = live_anchor_blocks(KS_ANCHOR, "from any to any");
+    let live_udp = live_anchor_blocks(KS_ANCHOR, "proto udp")
+        .or_else(|| live_anchor_blocks(LEGACY_KS_ANCHOR, "proto udp"));
+    let live_strict = live_anchor_blocks(KS_ANCHOR, "from any to any")
+        .or_else(|| live_anchor_blocks(LEGACY_KS_ANCHOR, "from any to any"));
     let live = live_strict.or(live_udp);
     let active = live.unwrap_or(marker_active);
     let verified_live = live.is_some();
@@ -76,7 +85,8 @@ pub fn network_lock_status() -> NetworkLockStatus {
         .ok()
         .and_then(|p| fs::read_to_string(p).ok())
         == Some("1".into());
-    let live = live_anchor_blocks(LOCK_ANCHOR, "inet6");
+    let live = live_anchor_blocks(LOCK_ANCHOR, "inet6")
+        .or_else(|| live_anchor_blocks(LEGACY_LOCK_ANCHOR, "inet6"));
     let active = live.unwrap_or(marker_active);
     let verified_live = live.is_some();
     NetworkLockStatus {
@@ -160,11 +170,15 @@ pub async fn disable() -> Result<String, String> {
                 return Err(resp.message);
             }
         } else {
-            let script = format!("pfctl -a {KS_ANCHOR} -F all || true");
+            let script = format!(
+                "pfctl -a {KS_ANCHOR} -F all || true; pfctl -a {LEGACY_KS_ANCHOR} -F all || true; pfctl -a {LEGACY_BARE_KS_ANCHOR} -F all || true"
+            );
             run_admin(&script).await?;
         }
     } else {
-        let script = format!("pfctl -a {KS_ANCHOR} -F all || true");
+        let script = format!(
+            "pfctl -a {KS_ANCHOR} -F all || true; pfctl -a {LEGACY_KS_ANCHOR} -F all || true; pfctl -a {LEGACY_BARE_KS_ANCHOR} -F all || true"
+        );
         run_admin(&script).await?;
     }
     let live = status();
@@ -288,11 +302,15 @@ pub async fn disable_network_lock() -> Result<String, String> {
                 return Err(resp.message);
             }
         } else {
-            let script = format!("pfctl -a {LOCK_ANCHOR} -F all || true");
+            let script = format!(
+                "pfctl -a {LOCK_ANCHOR} -F all || true; pfctl -a {LEGACY_LOCK_ANCHOR} -F all || true; pfctl -a {LEGACY_BARE_LOCK_ANCHOR} -F all || true"
+            );
             run_admin(&script).await?;
         }
     } else {
-        let script = format!("pfctl -a {LOCK_ANCHOR} -F all || true");
+        let script = format!(
+            "pfctl -a {LOCK_ANCHOR} -F all || true; pfctl -a {LEGACY_LOCK_ANCHOR} -F all || true; pfctl -a {LEGACY_BARE_LOCK_ANCHOR} -F all || true"
+        );
         run_admin(&script).await?;
     }
     let live = network_lock_status();
@@ -336,8 +354,8 @@ mod tests {
     #[test]
     fn pf_rules_block_clearnet_udp_and_ipv6_but_allow_loopback() {
         let rules = pf_rules();
-        assert!(rules.contains("block drop log out quick proto udp from any to any"));
-        assert!(rules.contains("block drop log out quick inet6 from any to any"));
+        assert!(rules.contains("block drop out log quick proto udp from any to any"));
+        assert!(rules.contains("block drop out log quick inet6 from any to any"));
         assert!(rules.contains("pass out quick on lo0 all"));
         assert!(rules.contains("pass out quick to 127.0.0.1"));
         assert!(rules.contains("pass out quick to ::1"));
@@ -361,8 +379,8 @@ mod tests {
     #[test]
     fn lock_rules_match_transition_posture() {
         let rules = pf_lock_rules();
-        assert!(rules.contains("block drop log out quick inet6"));
-        assert!(rules.contains("block drop log out quick proto udp"));
+        assert!(rules.contains("block drop out log quick inet6"));
+        assert!(rules.contains("block drop out log quick proto udp"));
         assert!(rules.contains("pass out quick to ::1"));
     }
 

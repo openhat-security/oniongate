@@ -4,6 +4,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "windows")]
+use crate::win_console::HideConsole;
+
 /// What `audit` needs to know about a site, regardless of whether it is a
 /// temporary control-port service or a permanent `HiddenServiceDir` site.
 pub struct AuditTarget<'a> {
@@ -73,6 +76,7 @@ pub fn inspect_listener(port: u16) -> ListenerAudit {
     #[cfg(target_os = "windows")]
     let output = Command::new("netstat.exe")
         .args(["-ano", "-p", "tcp"])
+        .hide_console()
         .output();
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     let output: std::io::Result<std::process::Output> = Err(std::io::Error::new(

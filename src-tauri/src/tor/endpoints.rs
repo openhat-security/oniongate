@@ -158,7 +158,17 @@ pub fn bootstrap_allowlist(settings: &AppSettings) -> Result<Vec<IpAddr>, String
     if let Some(reason) = strategy_blocks_strict_lock(settings) {
         return Err(reason.into());
     }
-    let mut ips = bridge_ips(settings);
+    // Only pin the lock to configured bridges when this attempt actually uses
+    // them. Smart Connect's "direct" try used to inherit leftover bridge IPs
+    // and then time out against a lock that blocked every directory authority.
+    let using_bridges = settings.bridges_enabled
+        && !settings.bridge_lines.is_empty()
+        && settings.last_connect_strategy != "direct";
+    let mut ips = if using_bridges {
+        bridge_ips(settings)
+    } else {
+        Vec::new()
+    };
     if ips.is_empty() {
         ips.extend(dirauth_ips());
         for ip in cached_guard_ips() {
@@ -279,6 +289,30 @@ mod tests {
         let mut s = AppSettings::default();
         s.bridge_lines = vec!["Bridge 198.51.100.20:443 FINGERPRINT".into()];
         assert_eq!(bridge_ips(&s)[0].to_string(), "198.51.100.20");
+    }
+
+    #[test]
+    fn direct_bootstrap_allowlist_ignores_unused_bridge_lines() {
+        let mut s = AppSettings::default();
+        s.bridges_enabled = false;
+        s.last_connect_strategy = "direct".into();
+        s.bridge_lines = vec!["Bridge 198.51.100.20:443 FINGERPRINT".into()];
+        let ips = bootstrap_allowlist(&s).unwrap();
+        assert!(
+            !ips.iter().any(|ip| ip.to_string() == "198.51.100.20"),
+            "direct must pin directory authorities, not leftover bridges"
+        );
+        assert!(ips.iter().any(|ip| ip.to_string() == "128.31.0.39"));
+    }
+
+    #[test]
+    fn bridges_bootstrap_allowlist_uses_bridge_ips() {
+        let mut s = AppSettings::default();
+        s.bridges_enabled = true;
+        s.last_connect_strategy = "bridges".into();
+        s.bridge_lines = vec!["Bridge 198.51.100.20:443 FINGERPRINT".into()];
+        let ips = bootstrap_allowlist(&s).unwrap();
+        assert_eq!(ips[0].to_string(), "198.51.100.20");
     }
 
     #[test]

@@ -7,9 +7,42 @@ use serde::{Deserialize, Serialize};
 use tokio::process::{Child, Command};
 
 use crate::deps;
+use crate::helper::TunSpec;
 use crate::settings::AppSettings;
 use crate::tor::process::ISOLATED_SOCKS_PORT;
 use crate::tor::{DNS_PORT, SOCKS_HOST};
+#[cfg(target_os = "windows")]
+use crate::win_console::HideConsole;
+
+/// Root-owned locations the privileged helper uses for TUN on macOS. These are
+/// fixed constants on both sides of the protocol: the client never sends them
+/// and the helper never accepts them, so a compromised client cannot point the
+/// root side at a binary or a config of its own.
+#[cfg(target_os = "macos")]
+pub const PINNED_SINGBOX: &str = "/Library/PrivilegedHelperTools/oniongate-sing-box";
+#[cfg(target_os = "macos")]
+pub const HELPER_TUN_DIR: &str = "/Library/Application Support/OnionGate";
+#[cfg(target_os = "macos")]
+pub const HELPER_TUN_CONFIG: &str = "/Library/Application Support/OnionGate/sing-box-tun.json";
+#[cfg(target_os = "macos")]
+pub const HELPER_TUN_LOG: &str = "/Library/Application Support/OnionGate/sing-box.log";
+
+/// True when the privileged helper can start TUN without an admin prompt: the
+/// daemon is reachable *and* the PKG has staged the pinned sing-box it execs.
+///
+/// A helper that is missing the pinned binary has no TUN capability at all, so
+/// treating it as unavailable keeps the interactive path working for installs
+/// that predate the PKG. It is not a fallback for a helper that refuses — once
+/// this returns true, a helper error is fatal and never silently rerouted.
+#[cfg(target_os = "macos")]
+pub fn helper_backed() -> bool {
+    crate::helper::client::available() && std::path::Path::new(PINNED_SINGBOX).is_file()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn helper_backed() -> bool {
+    false
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TunStatus {
@@ -71,7 +104,26 @@ pub fn write_config() -> Result<PathBuf, String> {
 }
 
 fn build_config(settings: &AppSettings, log_output: &str) -> serde_json::Value {
-    let (dns_server, dns_tag) = dns_server(settings.remote_dns);
+    build_config_from_spec(
+        &TunSpec::from_settings(settings),
+        log_output,
+        crate::tor::find_tor_binary().as_deref(),
+    )
+}
+
+/// The single sing-box config generator, shared by the in-app path and the root
+/// helper so both get the same UDP/QUIC, IPv6, and Tor-exemption guarantees.
+///
+/// `tor_binary` is resolved by the caller because the two sides see different
+/// filesystems: the app knows its own bundled Tor, while the helper derives it
+/// from the authenticated peer. A miss only costs Tor its direct route to a
+/// guard, which fails closed (Tor cannot bootstrap) rather than leaking.
+pub fn build_config_from_spec(
+    spec: &TunSpec,
+    log_output: &str,
+    tor_binary: Option<&std::path::Path>,
+) -> serde_json::Value {
+    let (dns_server, dns_tag) = dns_server(spec.remote_dns);
 
     let mut rules = vec![
         serde_json::json!({ "protocol": "quic", "outbound": "block" }),
@@ -83,14 +135,14 @@ fn build_config(settings: &AppSettings, log_output: &str) -> serde_json::Value {
     // falls through to `tor-socks` and is handed back to Tor, which dials the same
     // guard again. Sits after the UDP blocks so Tor gains no UDP path, and matches
     // on path so an unrelated binary named `tor` cannot claim the exemption.
-    if let Some(tor) = crate::tor::find_tor_binary() {
+    if let Some(tor) = tor_binary {
         rules.push(serde_json::json!({
             "process_path": [tor.display().to_string()],
             "outbound": "direct"
         }));
     }
 
-    if !settings.strict_tcp_lock {
+    if !spec.strict_tcp_lock {
         rules.push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
     }
 
@@ -107,16 +159,16 @@ fn build_config(settings: &AppSettings, log_output: &str) -> serde_json::Value {
             "server_port": ISOLATED_SOCKS_PORT,
             "version": "5",
             "username": "oniongate-default",
-            "password": settings.circuit_epoch.to_string()
+            "password": spec.circuit_epoch.to_string()
         }),
         serde_json::json!({ "type": "block", "tag": "block" }),
         serde_json::json!({ "type": "direct", "tag": "direct" }),
     ];
 
-    let final_outbound = if settings.split_tunnel && !settings.route_apps.is_empty() {
-        for (index, app) in settings.route_apps.iter().enumerate() {
+    let final_outbound = if spec.split_tunnel && !spec.route_apps.is_empty() {
+        for (index, app) in spec.route_apps.iter().enumerate() {
             let tag = format!("tor-app-{index}");
-            if settings.app_routing_policy == "only" {
+            if spec.app_routing_policy == "only" {
                 outbounds.push(serde_json::json!({
                     "type": "socks",
                     "tag": tag,
@@ -127,7 +179,7 @@ fn build_config(settings: &AppSettings, log_output: &str) -> serde_json::Value {
                     "password": app.circuit_epoch.to_string()
                 }));
             }
-            let outbound = if settings.app_routing_policy == "only" {
+            let outbound = if spec.app_routing_policy == "only" {
                 tag
             } else {
                 "direct".into()
@@ -140,7 +192,7 @@ fn build_config(settings: &AppSettings, log_output: &str) -> serde_json::Value {
             }
             rules.insert(0, rule);
         }
-        if settings.app_routing_policy == "only" && !settings.strict_tcp_lock {
+        if spec.app_routing_policy == "only" && !spec.strict_tcp_lock {
             "direct"
         } else {
             "tor-socks"
@@ -201,6 +253,7 @@ pub fn process_seems_running() -> bool {
     {
         return std::process::Command::new("tasklist.exe")
             .args(["/FI", "IMAGENAME eq sing-box.exe", "/NH"])
+            .hide_console()
             .output()
             .map(|output| {
                 output.status.success()
@@ -245,6 +298,7 @@ fn tun_iface_present() -> bool {
                 "-Command",
                 "Get-NetAdapter -InterfaceAlias torsocks0 -ErrorAction SilentlyContinue",
             ])
+            .hide_console()
             .output();
         output
             .map(|result| result.status.success() && !result.stdout.is_empty())
@@ -309,6 +363,8 @@ pub fn status(child: &Option<Child>) -> TunStatus {
                 .unwrap_or_else(|| "sing-box not found".into())
         } else if running {
             "TUN active (system traffic via sing-box → Tor SOCKS)".into()
+        } else if helper_backed() {
+            "TUN idle — the privileged helper can start it without a prompt".into()
         } else {
             "TUN idle — administrator approval required to start".into()
         },
@@ -327,6 +383,23 @@ pub async fn start(managed: &mut Option<Child>) -> Result<String, String> {
     {
         if process_seems_running() {
             return Ok("TUN (sing-box) already running".into());
+        }
+
+        // The helper elevates once at install time, so the prompt-free path is
+        // preferred whenever it is provisioned. A helper that refuses is fatal:
+        // rerouting to the interactive path would hide a policy refusal.
+        #[cfg(target_os = "macos")]
+        if helper_backed() {
+            let spec = TunSpec::from_settings(&crate::settings::load());
+            crate::logs::append("Starting sing-box TUN through the privileged helper");
+            let message = helper_call(crate::helper::HelperRequest::TunStart { spec }).await?;
+            *managed = None;
+            if !wait_until_running(4000).await {
+                return Err(format!(
+                    "The privileged helper started sing-box but no TUN appeared. {message}"
+                ));
+            }
+            return Ok("TUN started by the privileged helper (sing-box → Tor SOCKS)".into());
         }
 
         let sing = deps::find_singbox().ok_or_else(|| {
@@ -362,6 +435,25 @@ pub async fn start(managed: &mut Option<Child>) -> Result<String, String> {
         }
 
         Ok("TUN started with administrator privileges (sing-box → Tor SOCKS)".into())
+    }
+}
+
+/// Send one typed request to the privileged helper. Any transport failure or
+/// refusal is returned as an error: a provisioned helper that says no must never
+/// be papered over with a second, weaker attempt.
+#[cfg(target_os = "macos")]
+async fn helper_call(req: crate::helper::HelperRequest) -> Result<String, String> {
+    let response = tokio::task::spawn_blocking(move || crate::helper::client::request(&req))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+        .map_err(|e| format!("The privileged helper did not answer: {e}"))?;
+    if response.ok {
+        Ok(response.message)
+    } else {
+        Err(format!(
+            "The privileged helper refused: {}",
+            response.message
+        ))
     }
 }
 
@@ -459,6 +551,7 @@ async fn start_elevated(
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        .hide_console()
         .status()
         .await
         .map_err(|e| e.to_string())?;
@@ -478,6 +571,28 @@ pub async fn stop(managed: &mut Option<Child>) -> Result<String, String> {
         let _ = child.kill().await;
         let _ = child.wait().await;
         crate::logs::append("Stopped managed sing-box process");
+    }
+
+    #[cfg(target_os = "macos")]
+    if helper_backed() {
+        if !process_seems_running() {
+            return Ok("TUN already stopped".into());
+        }
+        helper_call(crate::helper::HelperRequest::TunStop).await?;
+        tokio::time::sleep(Duration::from_millis(350)).await;
+        if !process_seems_running() {
+            return Ok("Stopped TUN / sing-box (privileged helper)".into());
+        }
+        // The helper only ever stops its own pinned binary, so a survivor here is
+        // a sing-box it does not own — typically one an earlier build started
+        // through the admin prompt. Tearing that one down still needs the prompt.
+        crate::logs::append("A sing-box outside the privileged helper is still running; asking for administrator approval to stop it");
+        stop_elevated().await?;
+        tokio::time::sleep(Duration::from_millis(350)).await;
+        if process_seems_running() {
+            return Err("sing-box is still running after the privileged helper and an elevated stop both ran".into());
+        }
+        return Ok("Stopped TUN / sing-box".into());
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -509,6 +624,7 @@ pub async fn stop(managed: &mut Option<Child>) -> Result<String, String> {
             .args(["/IM", "sing-box.exe", "/F"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .hide_console()
             .status()
             .await;
         tokio::time::sleep(Duration::from_millis(350)).await;
@@ -549,11 +665,12 @@ async fn stop_elevated() -> Result<(), String> {
 #[cfg(target_os = "windows")]
 async fn stop_elevated() -> Result<(), String> {
     let script =
-        "Start-Process taskkill.exe -Verb RunAs -Wait -ArgumentList '/IM','sing-box.exe','/F'";
+        "Start-Process taskkill.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '/IM','sing-box.exe','/F'";
     let status = Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        .hide_console()
         .status()
         .await
         .map_err(|e| e.to_string())?;
@@ -874,6 +991,56 @@ mod tests {
             "/Applications/Signal.app/Contents/MacOS/Signal"
         );
         assert!(rule.get("process_name").is_none());
+    }
+
+    /// The root helper builds its config from a `TunSpec` rather than from
+    /// settings it cannot read, so the same generator has to produce the same
+    /// document either way — otherwise the assertions above stop describing
+    /// what actually runs in TUN mode.
+    #[test]
+    fn a_spec_produces_the_same_config_as_the_settings_it_came_from() {
+        let settings = AppSettings {
+            split_tunnel: true,
+            app_routing_policy: "only".into(),
+            route_apps: vec![app("a", "signal", 7), app("b", "hexchat", 9)],
+            strict_tcp_lock: true,
+            ..AppSettings::default()
+        };
+        let from_settings = build_config(&settings, "/tmp/sing-box.log");
+        let from_spec = build_config_from_spec(
+            &TunSpec::from_settings(&settings),
+            "/tmp/sing-box.log",
+            crate::tor::find_tor_binary().as_deref(),
+        );
+        assert_eq!(from_settings, from_spec);
+    }
+
+    /// The helper resolves Tor from the authenticated peer and may come up
+    /// empty. That must not open a hole in the rest of the policy.
+    #[test]
+    fn a_config_without_a_tor_exemption_still_blocks_udp_and_ipv6() {
+        use crate::helper::TunRoutedApp;
+        let spec = TunSpec {
+            split_tunnel: true,
+            route_apps: vec![TunRoutedApp {
+                process_name: "signal".into(),
+                circuit_epoch: 7,
+                ..TunRoutedApp::default()
+            }],
+            ..TunSpec::default()
+        };
+        let config = build_config_from_spec(&spec, "/tmp/sing-box.log", None);
+        let all = rules(&config);
+        assert!(all
+            .iter()
+            .any(|r| r["network"] == "udp" && r["outbound"] == "block"));
+        assert!(all
+            .iter()
+            .any(|r| r["ip_version"] == 6 && r["outbound"] == "block"));
+        assert!(
+            all.iter().all(|r| r.get("process_path").is_none()),
+            "no Tor exemption is expected when the binary cannot be resolved"
+        );
     }
 
     /// Split tunnel with no apps selected must not silently drop the guard.

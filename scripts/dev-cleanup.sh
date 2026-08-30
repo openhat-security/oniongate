@@ -17,12 +17,12 @@ run_stop() {
   return 1
 }
 
-if run_stop "$ROOT/src-tauri/target/debug/oniongate"; then
+if run_stop "$ROOT/src-tauri/target/debug/oniongate-cli"; then
   exit $?
 fi
-if run_stop "$ROOT/src-tauri/target/release/oniongate"; then
+if run_stop "$ROOT/src-tauri/target/release/oniongate-cli"; then
   exit $?
 fi
 
-echo "OnionGate: restoring host network defaults via cargo oniongate stop"
-exec cargo run --manifest-path "$MANIFEST" --bin oniongate --quiet -- stop
+echo "OnionGate: restoring host network defaults via cargo oniongate-cli stop"
+exec cargo run --manifest-path "$MANIFEST" --bin oniongate-cli --quiet -- stop

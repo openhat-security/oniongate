@@ -1,4 +1,34 @@
-//! macOS privacy/security toggles (term7 SETTINGS + privacy.sexy inspired, clean-room).
+//! macOS privacy/security toggles.
+//!
+//! Most items here are clean-room: they set publicly documented `defaults`,
+//! `socketfilterfw`, `systemsetup`, `mdutil` and `cupsctl` values, each with its
+//! own live status check, and contain no third-party code.
+//!
+//! MODIFICATION NOTICE (GPL-3.0 section 5(a)):
+//! The items listed below contain work derived from term7's
+//! "MacOS-Privacy-and-Security-Enhancements" (GPL-3.0), specifically
+//! `01_Privacy-and-Security-Settings/script/MacOS-Seqouia_Privacy-and-Security-Settings.sh`.
+//! Modified by the OnionGate project on 2026-08-15:
+//!   * `legacy_services` — from their `launchctl disable system/com.apple.tftpd`
+//!     and `system/com.apple.telnetd` lines; turned into a reversible toggle
+//!     with a status check that reads `launchctl print-disabled system`.
+//!   * `cups_remote` — from their `cupsctl --no-remote-any --no-remote-admin`
+//!     lines; status read back from `cupsctl`.
+//!   * `siri_prefs` — the `UserHasDeclinedEnable`, `DidSeeSiriSetup`,
+//!     `NSStatusItem Visible Siri`, `Siri Data Sharing Opt-In Status` keys and
+//!     the `com.apple.assistantd` / `com.apple.Siri.agent` launchctl lines come
+//!     from their Siri section; OnionGate resolves the uid itself and reverses
+//!     every one of them when the toggle is turned off.
+//!
+//! Upstream also relies on interactive prompts and on the user editing System
+//! Settings by hand; none of that is reproduced. Everything else in this file —
+//! including the firewall, guest account, remote login, AirDrop, Dock, ads,
+//! analytics, location and Lockdown items — predates that reading and remains
+//! clean-room.
+//! Upstream: https://codeberg.org/term7/MacOS-Privacy-and-Security-Enhancements
+//!
+//! Credit without derivation: privacy.sexy, drduh's macOS Security and Privacy
+//! Guide.
 
 use std::process::{Command, Stdio};
 
@@ -149,6 +179,56 @@ fn printer_sharing_on() -> bool {
     t.contains("_share_printers=1") || t.contains("SharePrinters Yes")
 }
 
+/// `cupsctl` prints `_remote_any=0` / `_remote_admin=0` when remote printing and
+/// remote administration are off. Absent keys mean "not restricted".
+pub fn cups_remote_off(cupsctl_output: &str) -> bool {
+    let value = |key: &str| {
+        cupsctl_output
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(key)?.strip_prefix('='))
+            .map(|v| v.trim() == "0")
+    };
+    value("_remote_any").unwrap_or(false) && value("_remote_admin").unwrap_or(false)
+}
+
+/// Legacy cleartext servers. `tftpd` and `telnetd` come from term7's script;
+/// `ftpd` is OnionGate's own addition — same class of surface, same check.
+/// All three ship disabled on a healthy Mac; pinning them in launchd makes that
+/// explicit and survives something else switching one on.
+pub const LEGACY_SERVICES: &[&str] = &["com.apple.tftpd", "com.apple.telnetd", "com.apple.ftpd"];
+
+/// Read one label out of `launchctl print-disabled system`, whose lines look
+/// like `"com.apple.tftpd" => disabled` (older releases print `=> true`).
+pub fn service_disabled(listing: &str, label: &str) -> Option<bool> {
+    listing.lines().find_map(|line| {
+        let line = line.trim();
+        let (name, state) = line.split_once("=>")?;
+        if name.trim().trim_matches('"') != label {
+            return None;
+        }
+        match state
+            .trim()
+            .trim_end_matches(',')
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "disabled" | "true" => Some(true),
+            "enabled" | "false" => Some(false),
+            _ => None,
+        }
+    })
+}
+
+fn legacy_services_disabled() -> bool {
+    let listing = run_out("/bin/launchctl", &["print-disabled", "system"]);
+    if listing.trim().is_empty() {
+        return false;
+    }
+    LEGACY_SERVICES
+        .iter()
+        .all(|label| service_disabled(&listing, label) == Some(true))
+}
+
 /// Bonjour / mDNSResponder multicast advertisements (privacy.sexy-inspired).
 fn bonjour_multicast_off() -> bool {
     let v = defaults_read(
@@ -251,17 +331,36 @@ fn spotlight_indexing_on() -> bool {
     !t.to_ascii_lowercase().contains("disabled")
 }
 
+fn current_uid() -> String {
+    run_out("/usr/bin/id", &["-u"]).trim().to_string()
+}
+
+/// True when Siri's own agents are pinned off in launchd for this GUI session.
+fn siri_agents_disabled() -> bool {
+    let uid = current_uid();
+    if uid.is_empty() {
+        return false;
+    }
+    let listing = run_out("/bin/launchctl", &["print-disabled", &format!("gui/{uid}")]);
+    ["com.apple.assistantd", "com.apple.Siri.agent"]
+        .iter()
+        .all(|label| service_disabled(&listing, label) == Some(true))
+}
+
 fn siri_enabled() -> bool {
     // Various keys across releases; treat as on unless clearly disabled.
     let ask = defaults_read("com.apple.assistant.support", "Assistant Enabled");
     if ask == "0" || ask.eq_ignore_ascii_case("false") {
         return false;
     }
+    if defaults_bool("com.apple.Siri", "UserHasDeclinedEnable", false) {
+        return false;
+    }
     let status = defaults_read("com.apple.Siri", "StatusMenuVisible");
     if status == "0" {
         return false;
     }
-    true
+    !siri_agents_disabled()
 }
 
 fn elevate(script: &str) -> Result<(), String> {
@@ -410,6 +509,10 @@ pub fn list() -> Vec<HardenItem> {
     } else {
         format!("{} — active: {}", kill.detail, kill.running.join(", "))
     };
+
+    let wifi_boot = crate::harden::wifi_boot::status();
+    let boot_lock = crate::harden::boot_lock::status();
+    let connection_filter = crate::ne_filter::status();
 
     let loc = location_services_on();
     let loc_active = matches!(loc, Some(false));
@@ -815,18 +918,111 @@ pub fn list() -> Vec<HardenItem> {
             "guide",
             "Prevents booting from external media on Intel Macs.",
         ),
+        {
+            let mac = crate::harden::mac_random::status();
+            item(
+                "mac_random",
+                "Randomize Wi‑Fi MAC address",
+                "Draws a new locally administered address through the privileged helper and cycles the radio so the card associates under it.",
+                mac.locally_administered.unwrap_or(false),
+                mac.device.is_some(),
+                &mac.detail,
+                "security",
+                "action",
+                "Breaks captive portals and 802.1X / enterprise (WPA-Enterprise, eduroam, corporate) authentication until you re-authenticate — on some networks you will be locked out until an administrator clears the old address. The radio cycles, so the current Wi‑Fi connection drops. The address resets at the next reboot.",
+            )
+        },
+        {
+            let filter = &connection_filter;
+            item(
+                "connection_filter",
+                "Connection filter (Network Extension)",
+                "LuLu-style hold-and-drop for outbound flows that are not already Tor. pf stays the packet lock. Apple can hide some of its own processes from this filter.",
+                filter.installed && filter.running,
+                true,
+                &filter.detail,
+                "security",
+                "toggle",
+                "Needs a Developer ID build with a network-extension profile. If macOS asks, approve it in System Settings → General → Login Items & Extensions → Network Extensions. Unsigned builds never appear there. Default verdict is drop. Allow does not punch clearnet. If the filter is installed and this setting is on, a dead or bypassed filter marks the session Degraded.",
+            )
+        },
+        {
+            let lock = &boot_lock;
+            item(
+                "boot_network_lock",
+                "Block the network at boot",
+                "Recommended if you want no clearnet between restarts. Installs a root LaunchDaemon that default-denies every outbound NIC path (Wi‑Fi, Ethernet, USB) until you Connect.",
+                lock.installed,
+                true,
+                &lock.detail,
+                "security",
+                "toggle",
+                "Takes effect at the next boot, not now. Loopback and DHCP stay open so OnionGate can come back online; everything else is blocked until Connect replaces the lock. Pair with Start OnionGate at login and Connect on launch, or the Mac stays offline until you open the app and click Connect. Emergency Restore and Uninstall flush the lock. Wi‑Fi off at boot is a separate anti-probe control and does not cover Ethernet.",
+            )
+        },
+        {
+            let wifi = &wifi_boot;
+            item(
+                "wifi_off_at_boot",
+                "Turn Wi‑Fi off at boot",
+                "Installs a root LaunchDaemon that disables the Wi‑Fi service before login, powers the radio down, and sets pmset wake guards so waking from sleep does not quietly bring it back.",
+                wifi.installed,
+                true,
+                &wifi.detail,
+                "security",
+                "toggle",
+                "Does not block Ethernet or USB LAN — use Block the network at boot for that. Your Mac probes for remembered networks at boot, which is trackable and makes evil-twin attacks easier; this stops that. You must switch Wi‑Fi on yourself after login — OnionGate can do it for you once the session reports Protected (Settings). Wake-on-LAN is turned off while this is installed and restored when you remove it.",
+            )
+        },
         item(
-            "mac_random",
-            "Private Wi‑Fi address (guide)",
-            "Enable Private Wi‑Fi Address per network in System Settings.",
-            false,
+            "legacy_services",
+            "Disable legacy TFTP / Telnet / FTP servers",
+            "Pins the shipped cleartext servers off in launchd (tftpd, telnetd, ftpd).",
+            legacy_services_disabled(),
             true,
-            "System Settings → Wi‑Fi → Details → Private Wi‑Fi Address",
+            if legacy_services_disabled() {
+                "tftpd, telnetd and ftpd are disabled in launchd"
+            } else {
+                "At least one legacy server is not pinned off"
+            },
             "security",
-            "guide",
-            "Reduces long-term Wi‑Fi tracking by BSSID.",
+            "toggle",
+            "These accept unauthenticated or cleartext connections. They are normally off already; this makes it explicit.",
         ),
+        {
+            let cups = run_out("cupsctl", &[]);
+            let off = cups_remote_off(&cups);
+            item(
+                "cups_remote",
+                "Disable remote printing & CUPS admin",
+                "cupsctl --no-remote-any --no-remote-admin: refuses print jobs and administration from other hosts.",
+                off,
+                which::which("cupsctl").is_ok(),
+                if off {
+                    "Remote printing and remote CUPS administration are off"
+                } else {
+                    "CUPS still accepts remote printing or administration"
+                },
+                "security",
+                "toggle",
+                "Separate from printer sharing: this closes the CUPS web/admin surface to other machines on the network.",
+            )
+        },
         // —— Tools ——
+        {
+            let login = crate::harden::login_item::status();
+            item(
+                "launch_at_login",
+                "Start OnionGate at login",
+                "Installs a per-user LaunchAgent with RunAtLoad so OnionGate opens when you log in.",
+                login.installed && login.loaded && login.run_at_load && login.target_exists,
+                true,
+                &login.detail,
+                "tools",
+                "toggle",
+                "Starting the app does not start a Tor session unless Connect on launch is on in Settings. Recommended with Block the network at boot so you can come back online through Tor after a restart. Re-apply if you move OnionGate to a different folder.",
+            )
+        },
         item(
             "clear_dns_cache",
             "Flush DNS cache",
@@ -887,49 +1083,76 @@ pub async fn apply(id: &str, enable: bool) -> Result<String, String> {
             }
         }
         "siri_prefs" => {
+            // Siri's agents live in the user's GUI domain, so no elevation is
+            // needed. The uid is resolved here: passing "gui/$(id -u)/…" to a
+            // Command is a literal string, not a substitution.
+            let uid = current_uid();
+            let agents = ["com.apple.assistantd", "com.apple.Siri.agent"];
+            let write = |domain: &str, key: &str, kind: &str, value: &str| {
+                let _ = Command::new("defaults")
+                    .args(["write", domain, key, kind, value])
+                    .status();
+            };
             if enable {
-                let _ = Command::new("defaults")
-                    .args([
-                        "write",
-                        "com.apple.assistant.support",
-                        "Assistant Enabled",
-                        "-bool",
-                        "false",
-                    ])
-                    .status();
-                let _ = Command::new("defaults")
-                    .args([
-                        "write",
-                        "com.apple.Siri",
-                        "StatusMenuVisible",
-                        "-bool",
-                        "false",
-                    ])
-                    .status();
-                let _ = Command::new("defaults")
-                    .args([
-                        "write",
-                        "com.apple.Siri",
-                        "LockscreenEnabled",
-                        "-bool",
-                        "false",
-                    ])
-                    .status();
-                let _ = Command::new("launchctl")
-                    .args(["disable", "gui/$(id -u)/com.apple.assistantd"])
-                    .status();
-                Ok("Siri preferences disabled (best-effort). Consider Kill Siri for process killswitch.".into())
+                write(
+                    "com.apple.assistant.support",
+                    "Assistant Enabled",
+                    "-bool",
+                    "false",
+                );
+                write("com.apple.Siri", "StatusMenuVisible", "-bool", "false");
+                write("com.apple.Siri", "LockscreenEnabled", "-bool", "false");
+                write("com.apple.Siri", "UserHasDeclinedEnable", "-bool", "true");
+                write(
+                    "com.apple.SetupAssistant",
+                    "DidSeeSiriSetup",
+                    "-bool",
+                    "true",
+                );
+                write(
+                    "com.apple.systemuiserver",
+                    "NSStatusItem Visible Siri",
+                    "-int",
+                    "0",
+                );
+                // 2 = declined to share Siri recordings with Apple.
+                write(
+                    "com.apple.assistant.support",
+                    "Siri Data Sharing Opt-In Status",
+                    "-int",
+                    "2",
+                );
+                if !uid.is_empty() {
+                    for agent in agents {
+                        let _ = Command::new("/bin/launchctl")
+                            .args(["disable", &format!("gui/{uid}/{agent}")])
+                            .status();
+                    }
+                }
+                Ok("Siri preferences disabled and Siri's launch agents pinned off for this login. Add the Kill Siri killswitch for a process watchdog.".into())
             } else {
-                let _ = Command::new("defaults")
-                    .args([
-                        "write",
-                        "com.apple.assistant.support",
-                        "Assistant Enabled",
-                        "-bool",
-                        "true",
-                    ])
-                    .status();
-                Ok("Siri preferences re-enabled (best-effort)".into())
+                write(
+                    "com.apple.assistant.support",
+                    "Assistant Enabled",
+                    "-bool",
+                    "true",
+                );
+                write("com.apple.Siri", "StatusMenuVisible", "-bool", "true");
+                write("com.apple.Siri", "UserHasDeclinedEnable", "-bool", "false");
+                write(
+                    "com.apple.systemuiserver",
+                    "NSStatusItem Visible Siri",
+                    "-int",
+                    "1",
+                );
+                if !uid.is_empty() {
+                    for agent in agents {
+                        let _ = Command::new("/bin/launchctl")
+                            .args(["enable", &format!("gui/{uid}/{agent}")])
+                            .status();
+                    }
+                }
+                Ok("Siri preferences and launch agents restored".into())
             }
         }
         "kill_siri" => {
@@ -1385,13 +1608,90 @@ pub async fn apply(id: &str, enable: bool) -> Result<String, String> {
                     .into(),
             )
         }
-        "mac_random" => {
-            let _ = Command::new("open")
-                .arg("x-apple.systempreferences:com.apple.preference.network")
-                .status();
-            Ok("Opened Network settings — enable Private Wi‑Fi Address per SSID".into())
+        "mac_random" => crate::harden::mac_random::randomize().await,
+        "connection_filter" => {
+            let _ = crate::settings::update(|s| s.connection_filter = enable);
+            if enable {
+                crate::ne_filter::activate()
+            } else {
+                crate::ne_filter::deactivate()
+            }
+        }
+        "boot_network_lock" => {
+            if enable {
+                crate::harden::boot_lock::install()
+            } else {
+                crate::harden::boot_lock::uninstall()
+            }
+        }
+        "wifi_off_at_boot" => {
+            if enable {
+                crate::harden::wifi_boot::install()
+            } else {
+                crate::harden::wifi_boot::uninstall()
+            }
+        }
+        "launch_at_login" => {
+            if enable {
+                crate::harden::login_item::install()
+            } else {
+                crate::harden::login_item::uninstall()
+            }
+        }
+        "legacy_services" => {
+            let verb = if enable { "disable" } else { "enable" };
+            let script = LEGACY_SERVICES
+                .iter()
+                .map(|label| format!("launchctl {verb} system/{label} 2>/dev/null || true"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            elevate(&script)?;
+            Ok(if enable {
+                "Legacy TFTP / Telnet / FTP servers pinned off in launchd".into()
+            } else {
+                "Legacy server launchd overrides cleared".into()
+            })
+        }
+        "cups_remote" => {
+            if which::which("cupsctl").is_err() {
+                return Err("cupsctl is not available on this Mac".into());
+            }
+            if enable {
+                elevate("cupsctl --no-remote-any --no-remote-admin")?;
+                Ok("Remote printing and remote CUPS administration disabled".into())
+            } else {
+                elevate("cupsctl --remote-any --remote-admin")?;
+                Ok("Remote printing and remote CUPS administration re-enabled".into())
+            }
         }
         "macports" => crate::harden::macports::open_download(),
         _ => Err(format!("Unknown harden id: {id}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `launchctl print-disabled system` prints `"label" => disabled`; older
+    /// releases print `=> true`. A label we did not ask about must not match.
+    #[test]
+    fn disabled_services_are_read_by_exact_label() {
+        let listing = "\tdisabled services = {\n\t\t\"com.apple.tftpd\" => disabled\n\t\t\"com.apple.telnetd\" => true\n\t\t\"com.apple.ftpd\" => enabled\n\t\t\"com.apple.bootpd\" => false\n\t}\n";
+        assert_eq!(service_disabled(listing, "com.apple.tftpd"), Some(true));
+        assert_eq!(service_disabled(listing, "com.apple.telnetd"), Some(true));
+        assert_eq!(service_disabled(listing, "com.apple.ftpd"), Some(false));
+        assert_eq!(service_disabled(listing, "com.apple.bootpd"), Some(false));
+        assert_eq!(service_disabled(listing, "com.apple.sshd"), None);
+    }
+
+    /// A missing key must read as "not restricted" rather than as hardened.
+    #[test]
+    fn cups_remote_access_needs_both_keys_off() {
+        let both = "_remote_admin=0\n_remote_any=0\n_share_printers=0\n";
+        let one = "_remote_admin=0\n_remote_any=1\n";
+        assert!(cups_remote_off(both));
+        assert!(!cups_remote_off(one));
+        assert!(!cups_remote_off("WebInterface=No\n"));
     }
 }

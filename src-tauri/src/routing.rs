@@ -43,7 +43,7 @@ pub async fn search_relays(query: &str, limit: usize) -> Result<Vec<RelayInfo>, 
     );
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
-        .user_agent("tor-socks-gui/0.1")
+        .user_agent("oniongate/0.2")
         .build()
         .map_err(|e| e.to_string())?;
     let resp = client

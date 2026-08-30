@@ -1,20 +1,29 @@
 [package]
-name = "tor-socks-gui"
-version = "0.2.3"
+name = "oniongate"
+version = "0.2.4"
 description = "OnionGate — Tor Workstation Toolkit with isolated routing and Onion Host"
 authors = ["adamsiwiec"]
 edition = "2021"
 license = "GPL-3.0-only"
-repository = "https://github.com/irruptio-security/oniongate"
-homepage = "https://irruptio-security.github.io/oniongate/"
-default-run = "tor-socks-gui"
+repository = "https://github.com/openhat-security/oniongate"
+homepage = "https://openhat-security.github.io/oniongate/"
+autobins = false
+default-run = "OnionGate"
 
 [lib]
-name = "tor_socks_gui_lib"
+name = "oniongate_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "oniongate"
+name = "OnionGate"
+path = "src/main.rs"
+
+# Must not be named `oniongate`: macOS (and Windows) filesystems are
+# case-insensitive, so that path is the same inode as the GUI `OnionGate`
+# binary and the CLI silently overwrites the app. Double-click then runs
+# `status` and exits. Linux packages still expose the clap name `oniongate`.
+[[bin]]
+name = "oniongate-cli"
 path = "src/bin/oniongate_cli.rs"
 
 # Privileged helper daemon. Platform service installers register it once.

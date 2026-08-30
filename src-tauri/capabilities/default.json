@@ -1,18 +1,33 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Capability for the main window",
-  "windows": ["main"],
-  "permissions": [
-    "core:default",
-    "core:window:allow-start-dragging",
-    "core:window:allow-set-size",
-    "core:window:allow-center",
-    "core:window:allow-current-monitor",
-    "core:window:allow-show",
-    "dialog:default",
-    "dialog:allow-open",
-    "updater:default",
-    "process:allow-restart"
+  "capabilities": [
+    {
+      "identifier": "default",
+      "description": "Capability for the main window",
+      "windows": ["main"],
+      "permissions": [
+        "core:default",
+        "core:window:allow-start-dragging",
+        "core:window:allow-set-size",
+        "core:window:allow-center",
+        "core:window:allow-current-monitor",
+        "core:window:allow-show",
+        "dialog:default",
+        "dialog:allow-open",
+        "updater:default",
+        "process:allow-restart"
+      ]
+    },
+    {
+      "identifier": "clearnet-alert",
+      "description": "Capability for the always-on-top clearnet alert popup. Only what that window needs: receive its process list over an event, drag itself, and show or close itself. No dialog, updater, or process permissions.",
+      "windows": ["clearnet-alert"],
+      "permissions": [
+        "core:default",
+        "core:window:allow-start-dragging",
+        "core:window:allow-show",
+        "core:window:allow-close"
+      ]
+    }
   ]
 }

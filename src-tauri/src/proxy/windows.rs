@@ -1,11 +1,13 @@
 use super::{ProxyStatus, SavedProxyState};
 use crate::tor::{SOCKS_HOST, SOCKS_PORT};
+use crate::win_console::HideConsole;
 
 const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 
 fn query(name: &str) -> Option<String> {
     let output = std::process::Command::new("reg")
         .args(["query", KEY, "/v", name])
+        .hide_console()
         .output()
         .ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
@@ -18,6 +20,7 @@ fn query(name: &str) -> Option<String> {
 fn set(name: &str, kind: &str, value: &str) -> Result<(), String> {
     let status = std::process::Command::new("reg")
         .args(["add", KEY, "/v", name, "/t", kind, "/d", value, "/f"])
+        .hide_console()
         .status()
         .map_err(|e| e.to_string())?;
     status
@@ -77,6 +80,22 @@ pub fn enable(saved: &mut SavedProxyState) -> Result<String, String> {
         &format!("socks={SOCKS_HOST}:{SOCKS_PORT}"),
     )?;
     set("ProxyEnable", "REG_DWORD", "1")?;
+    if !get_status().enabled {
+        if let Some(server) = &saved.windows_proxy_server {
+            let _ = set("ProxyServer", "REG_SZ", server);
+        }
+        if let Some(override_value) = &saved.windows_proxy_override {
+            let _ = set("ProxyOverride", "REG_SZ", override_value);
+        }
+        let _ = set(
+            "ProxyEnable",
+            "REG_DWORD",
+            &saved.windows_proxy_enable.unwrap_or(0).to_string(),
+        );
+        return Err(
+            "Windows SOCKS did not verify as enabled to the local Tor listener".into(),
+        );
+    }
     Ok("Enabled Windows SOCKS proxy for WinINet-aware applications".into())
 }
 

@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   Globe,
   Home,
+  Loader2,
   PanelLeftClose,
   PanelLeftOpen,
   Shield,
@@ -13,6 +14,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useTorApp } from "@/hooks/useTorApp";
+import { useAppVersion } from "@/hooks/useAppVersion";
+import { ProjectLink } from "@/components/ProjectLink";
 import { ConnectPage } from "@/pages/ConnectPage";
 import { AppsPage } from "@/pages/AppsPage";
 import { VerifyPage } from "@/pages/VerifyPage";
@@ -23,10 +26,24 @@ import { Flash } from "@/components/Flash";
 import { SetupWizard } from "@/components/SetupWizard";
 import { ClearnetAlert } from "@/components/ClearnetAlert";
 import { DenyAlert } from "@/components/DenyAlert";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
-import type { Tab } from "@/lib/types";
+import type { KillClearnetIdentityResult, Tab } from "@/lib/types";
+import {
+  armReopenThroughTor,
+  claimReopenThroughTor,
+  disarmReopenThroughTor,
+  finishReopenThroughTor,
+  isProtectedThroughTun,
+  isTunRoute,
+  listReopenableApps,
+  reopenClosedApps,
+  useReopenRequest,
+  type ReopenPhase,
+} from "@/lib/reopen";
 import { cn } from "@/lib/utils";
 import { effectiveLocale } from "@/lib/i18n";
+import { releaseChannel } from "@/lib/release";
 import { startWindowDrag } from "@/lib/drag";
 import {
   readSidebarCollapsed,
@@ -45,6 +62,8 @@ const NAV: { id: Tab; label: string; icon: LucideIcon }[] = [
 
 export default function App() {
   const app = useTorApp();
+  const version = useAppVersion();
+  const channel = releaseChannel(version);
   const locale = effectiveLocale(app.settings?.locale);
   const showWizard = !!app.settings && !app.settings.setup_complete;
 
@@ -53,6 +72,33 @@ export default function App() {
   );
   const [clearnetAlert, setClearnetAlert] = useState(false);
   const [clearnetAlertDismissed, setClearnetAlertDismissed] = useState(false);
+
+  const reopen = useReopenRequest();
+  const reopenReady = isProtectedThroughTun(app);
+  const tunRoute = isTunRoute(app);
+
+  // The single place that fires a reopen. Surfaces only arm the request; apps
+  // are relaunched here, after the session reports verified Protected over TUN.
+  useEffect(() => {
+    if (reopen.phase !== "armed" || !reopenReady) return;
+    if (!claimReopenThroughTor()) return;
+    void app.run(async () => {
+      try {
+        return await reopenClosedApps();
+      } finally {
+        finishReopenThroughTor();
+      }
+    });
+  }, [reopen.phase, reopenReady, app.run]);
+
+  // A reopen waiting on a session that never arrived (failed connect) or that
+  // went away (disconnect) would never fire, so drop it once the session is
+  // settled at disconnected with nothing in flight.
+  useEffect(() => {
+    if (reopen.phase !== "armed") return;
+    if (app.busy || app.status?.session_phase !== "disconnected") return;
+    disarmReopenThroughTor();
+  }, [reopen.phase, app.busy, app.status?.session_phase]);
 
   useEffect(() => {
     if (!app.torOn) {
@@ -137,8 +183,15 @@ export default function App() {
               draggable={false}
             />
             {!collapsed ? (
-              <div className="truncate text-[15px] font-semibold tracking-tight text-rail-ink">
-                OnionGate
+              <div className="min-w-0">
+                <div className="truncate text-[15px] font-semibold tracking-tight text-rail-ink">
+                  OnionGate
+                </div>
+                {version ? (
+                  <div className="truncate text-[10px] text-rail-muted">
+                    {version} {channel}
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -198,13 +251,41 @@ export default function App() {
             })}
           </nav>
 
-          {!collapsed ? (
-            <div className="mt-auto border-t border-white/[0.06] px-3.5 py-3">
+          <div
+            className={cn(
+              "mt-auto border-t border-white/[0.06]",
+              collapsed ? "px-2 py-3 text-center" : "px-3.5 py-3",
+            )}
+          >
+            {!collapsed ? (
               <p className="truncate text-[10px] text-rail-muted">
                 {app.protectionLabel}
               </p>
-            </div>
-          ) : null}
+            ) : null}
+            {collapsed && version ? (
+              <p className="text-[10px] leading-tight text-rail-muted">
+                {version}
+                <br />
+                {channel}
+              </p>
+            ) : null}
+            {!collapsed ? (
+              <div className="mt-1.5 flex flex-col items-start gap-0.5 text-[10px] text-rail-muted">
+                <ProjectLink
+                  link="docs"
+                  className="text-rail-muted hover:text-rail-ink"
+                >
+                  See the docs
+                </ProjectLink>
+                <ProjectLink
+                  link="github"
+                  className="text-rail-muted hover:text-rail-ink"
+                >
+                  OpenHat Security
+                </ProjectLink>
+              </div>
+            ) : null}
+          </div>
         </aside>
 
         <main className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
@@ -231,15 +312,36 @@ export default function App() {
             error={app.error}
             onDismiss={app.clearFlash}
           />
+          <ReopenPending
+            phase={reopen.phase}
+            count={reopen.apps.length}
+            onCancel={disarmReopenThroughTor}
+          />
           {clearnetAlert ? (
             <ClearnetAlert
               processes={app.egressWatch?.clearnet_processes ?? []}
               busy={app.busy}
               showReview
+              tunRoute={tunRoute}
               onKill={() => {
                 setClearnetAlert(false);
                 setClearnetAlertDismissed(true);
                 app.killClearnetAndNewIdentity();
+              }}
+              onKillAndReopen={() => {
+                setClearnetAlert(false);
+                setClearnetAlertDismissed(true);
+                void app.run(async () => {
+                  const result = await invoke<KillClearnetIdentityResult>(
+                    "kill_clearnet_and_new_identity",
+                  );
+                  await app.refreshIps();
+                  await app.refreshEgressWatch();
+                  // Arm only after the processes are gone, so the watcher cannot
+                  // relaunch an app that is still holding a clearnet socket.
+                  armReopenThroughTor(await listReopenableApps().catch(() => []));
+                  return `${result.detail} They reopen through Tor once the session is verified Protected.`;
+                });
               }}
               onReview={() => {
                 setClearnetAlert(false);
@@ -311,5 +413,44 @@ export default function App() {
         </main>
       </div>
     </TooltipProvider>
+  );
+}
+
+/**
+ * Shows that closed applications are queued to reopen and that OnionGate is
+ * still waiting for verified protection before relaunching them.
+ */
+function ReopenPending({
+  phase,
+  count,
+  onCancel,
+}: {
+  phase: ReopenPhase;
+  count: number;
+  onCancel: () => void;
+}) {
+  if (phase === "idle") return null;
+  const apps = count === 1 ? "1 app" : `${count} apps`;
+
+  return (
+    <div
+      className="absolute inset-x-0 top-11 z-30 mx-auto flex w-full max-w-md items-center gap-2.5 rounded-xl border border-onion/45 bg-panel px-3.5 py-2.5 shadow-lg"
+      role="status"
+      aria-live="polite"
+    >
+      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-onion" />
+      <p className="min-w-0 flex-1 text-xs leading-snug text-ink">
+        {phase === "running"
+          ? `Reopening ${count > 0 ? apps : "closed apps"} through Tor…`
+          : `Waiting for verified Protected over TUN before reopening ${
+              count > 0 ? apps : "closed apps"
+            }.`}
+      </p>
+      {phase === "armed" ? (
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      ) : null}
+    </div>
   );
 }

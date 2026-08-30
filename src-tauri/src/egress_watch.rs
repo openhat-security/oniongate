@@ -17,10 +17,15 @@ use crate::tor::process::{
     BROWSER_CONTROL_PORT, BROWSER_SOCKS_PORT, CONTROL_PORT, DNS_PORT, ISOLATED_SOCKS_PORT,
     SOCKS_PORT,
 };
+#[cfg(target_os = "windows")]
+use crate::win_console::HideConsole;
 
 const MAX_ROWS: usize = 2000;
 const MAX_ROWS_PER_PID: usize = 48;
 const SCAN_INTERVAL: Duration = Duration::from_secs(2);
+/// Ceiling on remembered announcements. Past this the watch stops popping up
+/// rather than forgetting pids and re-nagging about them.
+const MAX_ANNOUNCED: usize = 2048;
 
 fn default_flow_count() -> u32 {
     1
@@ -34,6 +39,9 @@ const TUN_V6_PREFIX: u8 = 126;
 
 static SNAPSHOT: LazyLock<Mutex<EgressWatch>> =
     LazyLock::new(|| Mutex::new(EgressWatch::idle("Watch has not sampled yet")));
+
+/// Pids already announced in this session. Memory-only, reset on teardown.
+static ANNOUNCED: LazyLock<Mutex<HashSet<u32>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FlowClass {
@@ -99,6 +107,10 @@ pub struct ClearnetProcess {
     pub path: String,
     pub location: String,
     pub system: bool,
+    /// The Network Extension held and dropped this flow. False means the
+    /// socket was already live when the watch saw it.
+    #[serde(default)]
+    pub held: bool,
 }
 
 impl EgressWatch {
@@ -165,6 +177,8 @@ pub fn start_monitor() {
         loop {
             let watch = tokio::task::spawn_blocking(scan).await;
             if let Ok(next) = watch {
+                let _ = crate::ne_filter::reconcile_unseen(&next);
+                announce_new_clearnet(&next);
                 if let Ok(mut guard) = SNAPSHOT.lock() {
                     *guard = next;
                 }
@@ -172,6 +186,60 @@ pub fn start_monitor() {
             tokio::time::sleep(SCAN_INTERVAL).await;
         }
     });
+}
+
+/// Only a Protected session pops up, and only when the user has left clearnet
+/// alerts on. A clearnet socket during connect or teardown is expected.
+fn should_announce(alerts_enabled: bool, phase: crate::session::SessionPhase) -> bool {
+    alerts_enabled && phase == crate::session::SessionPhase::Protected
+}
+
+/// Killable pids from this sample that have not been announced yet, recording
+/// them as announced. Returned together so a burst becomes one popup instead of
+/// one window per pid, and so a pid is never announced twice.
+fn take_new_announcements(
+    announced: &mut HashSet<u32>,
+    processes: &[ClearnetProcess],
+) -> Vec<ClearnetProcess> {
+    let mut fresh = Vec::new();
+    for process in processes {
+        if !process.killable || announced.len() >= MAX_ANNOUNCED {
+            continue;
+        }
+        if announced.insert(process.pid) {
+            fresh.push(process.clone());
+        }
+    }
+    fresh
+}
+
+/// Forget every announcement and take down any open popup. Called on teardown
+/// so a new session starts from silence.
+pub fn reset_announced() {
+    let had_announcements = match ANNOUNCED.lock() {
+        Ok(mut announced) => {
+            let had = !announced.is_empty();
+            announced.clear();
+            had
+        }
+        Err(_) => false,
+    };
+    if had_announcements {
+        crate::alert::dismiss();
+    }
+}
+
+fn announce_new_clearnet(watch: &EgressWatch) {
+    let phase = crate::session::load().phase;
+    if !should_announce(crate::settings::load().clearnet_alerts, phase) {
+        reset_announced();
+        return;
+    }
+    let fresh = match ANNOUNCED.lock() {
+        Ok(mut announced) => take_new_announcements(&mut announced, &watch.clearnet_processes),
+        Err(_) => Vec::new(),
+    };
+    crate::alert::announce(fresh);
 }
 
 fn scan() -> EgressWatch {
@@ -315,6 +383,7 @@ pub fn unique_clearnet_processes(flows: &[EgressFlow]) -> Vec<ClearnetProcess> {
             path: flow.path.clone(),
             location: flow.location.clone(),
             system: flow.system,
+            held: false,
         });
     }
     out.sort_by(|a, b| a.process.cmp(&b.process).then(a.pid.cmp(&b.pid)));
@@ -767,6 +836,7 @@ fn pids_for_name(needle: &str) -> HashSet<u32> {
         );
         Command::new("powershell.exe")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .hide_console()
             .output()
             .ok()
             .map(|out| {
@@ -939,6 +1009,7 @@ $udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue | ForEach-Object {
 "#;
     let output = Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .hide_console()
         .output()
         .map_err(|e| format!("Could not list sockets: {e}"))?;
     if !output.status.success() {
@@ -1500,6 +1571,106 @@ apsd 520 adam 12u IPv6 0x1 0t0 TCP [::ffff:192.168.1.5]:49152->[::ffff:8.8.8.8]:
             .find(|f| f.remote == "1.1.1.1:443")
             .unwrap();
         assert_eq!(other.count, 1);
+    }
+
+    fn clearnet(process: &str, pid: u32, killable: bool) -> ClearnetProcess {
+        ClearnetProcess {
+            process: process.into(),
+            pid,
+            killable,
+            path: format!("/Applications/{process}.app/Contents/MacOS/{process}"),
+            location: format!("/Applications/{process}.app"),
+            system: !killable,
+            held: false,
+        }
+    }
+
+    #[test]
+    fn a_clearnet_pid_is_announced_once_and_never_again() {
+        let mut announced = HashSet::new();
+        let sample = vec![clearnet("Slack", 4242, true)];
+        let first = take_new_announcements(&mut announced, &sample);
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].pid, 4242);
+        // The same process keeps showing up in every 2s sample; it must not
+        // re-nag once it has been announced.
+        assert!(take_new_announcements(&mut announced, &sample).is_empty());
+        assert!(take_new_announcements(&mut announced, &sample).is_empty());
+    }
+
+    #[test]
+    fn a_burst_collapses_into_one_payload() {
+        let mut announced = HashSet::new();
+        let burst = vec![
+            clearnet("Slack", 1, true),
+            clearnet("Discord", 2, true),
+            clearnet("Spotify", 3, true),
+        ];
+        // One payload with all three, not three payloads (one window per pid).
+        let fresh = take_new_announcements(&mut announced, &burst);
+        assert_eq!(fresh.len(), 3);
+        assert_eq!(announced.len(), 3);
+
+        // A fourth process joining the burst announces only itself.
+        let mut later = burst.clone();
+        later.push(clearnet("Zoom", 4, true));
+        let fresh = take_new_announcements(&mut announced, &later);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].pid, 4);
+    }
+
+    #[test]
+    fn unkillable_processes_are_never_announced() {
+        let mut announced = HashSet::new();
+        let sample = vec![
+            clearnet("apsd", 77, false),
+            clearnet("Finder", 88, false),
+            clearnet("Slack", 99, true),
+        ];
+        let fresh = take_new_announcements(&mut announced, &sample);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].process, "Slack");
+        assert_eq!(announced.len(), 1);
+    }
+
+    #[test]
+    fn only_a_protected_session_with_alerts_on_announces() {
+        use crate::session::SessionPhase;
+
+        assert!(should_announce(true, SessionPhase::Protected));
+        // Opt-out setting wins even while protected.
+        assert!(!should_announce(false, SessionPhase::Protected));
+        // Clearnet during connect or teardown is expected, not a surprise.
+        for phase in [
+            SessionPhase::Disconnected,
+            SessionPhase::Connecting,
+            SessionPhase::Degraded,
+            SessionPhase::Recovering,
+        ] {
+            assert!(!should_announce(true, phase));
+        }
+    }
+
+    #[test]
+    fn announcements_stop_rather_than_forget_at_the_ceiling() {
+        let mut announced: HashSet<u32> = (0..MAX_ANNOUNCED as u32).collect();
+        let fresh = take_new_announcements(&mut announced, &[clearnet("Slack", 999_999, true)]);
+        assert!(fresh.is_empty());
+        assert_eq!(announced.len(), MAX_ANNOUNCED);
+    }
+
+    /// Exercises the real process-wide announcement set. No other test touches
+    /// it, so the parallel runner cannot interleave here.
+    #[test]
+    fn teardown_resets_the_announced_set() {
+        if let Ok(mut announced) = ANNOUNCED.lock() {
+            announced.insert(4242);
+        }
+        reset_announced();
+        assert!(ANNOUNCED.lock().unwrap().is_empty());
+        // Idempotent: a second teardown has nothing to dismiss.
+        reset_announced();
+        assert!(ANNOUNCED.lock().unwrap().is_empty());
     }
 
     #[test]

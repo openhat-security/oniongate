@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
@@ -208,7 +208,7 @@ export function useTorApp() {
       void refreshSettings();
       void refreshSnowflake();
     }
-    if (tab === "system") {
+    if (tab === "home" || tab === "system") {
       void refreshHarden();
     }
     if (tab === "apps") {
@@ -332,6 +332,22 @@ export function useTorApp() {
     if (busy || !status?.tor_installed || torOn) return;
     void run(async () => invoke<string>("start_tor"));
   };
+
+  const connectOnLaunchAttempted = useRef(false);
+  useEffect(() => {
+    if (connectOnLaunchAttempted.current) return;
+    if (!settings?.setup_complete || !settings.connect_on_launch) return;
+    if (!status?.tor_installed || torOn || busy) return;
+    connectOnLaunchAttempted.current = true;
+    void invoke<{ needed: boolean }>("get_recovery_status")
+      .then((recovery) => {
+        if (recovery.needed) return;
+        connectTor();
+      })
+      .catch(() => {
+        connectTor();
+      });
+  }, [settings, status, torOn, busy, connectTor]);
 
   const disconnectTor = () => {
     if (busy || !torOn) return;

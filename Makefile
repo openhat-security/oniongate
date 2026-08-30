@@ -3,7 +3,7 @@
 
 .PHONY: help setup install deps \
 	start dev run build build-frontend preview \
-	downloads icons \
+	downloads macos-filter macos-pkg macos-pkg-install macos-uninstall macos-reinstall icons \
 	check typecheck test lint fmt fmt-check audit \
 	changelog-check changelog-sync release-check release-bundle-local sidecar-sbom \
 	docs docs-build docs-preview \
@@ -52,8 +52,47 @@ preview: ## Serve the built frontend (vite preview)
 
 build: deps ## Build a release app bundle (Tauri)
 	$(NPM) run tauri build
+	@if [ "$$(uname -s)" = Darwin ] && { [ -n "$${APPLE_SIGNING_IDENTITY:-}" ] || [ "$${EMBED_FILTER:-}" = "1" ]; }; then \
+		$(MAKE) macos-filter || true; \
+		for app in src-tauri/target/release/bundle/macos/*.app; do \
+			[ -d "$$app" ] && bash scripts/embed-oniongate-filter.sh "$$app" || true; \
+		done; \
+	fi
 
 downloads: release-bundle-local ## Build local installer/download files for this OS
+
+macos-filter: ## Compile the macOS connection-filter system extension (needs Xcode)
+	$(MAKE) -C macos/OnionGateFilter
+
+macos-pkg: ## Rebuild only the macOS .pkg from the last built app bundle
+	bash scripts/build-macos-pkg.sh
+
+macos-pkg-install: macos-pkg ## Open the built .pkg in Installer.app (same UI a download user sees), then verify
+	@pkg="$$(ls -t src-tauri/target/release/bundle/pkg/OnionGate_*.pkg src-tauri/target/*/release/bundle/pkg/OnionGate_*.pkg 2>/dev/null | head -1)"; \
+	if [ -z "$$pkg" ]; then \
+		echo "No .pkg found — run 'make build && make macos-pkg' first" >&2; exit 1; \
+	fi; \
+	echo "==> Opening Installer.app with $$pkg"; \
+	echo "    This is the same product installer a release download opens:"; \
+	echo "    welcome, GPL license, Install, then the system admin prompt."; \
+	echo "    Walk every pane. Do not use the command-line installer."; \
+	echo "    Quit Installer when it finishes (or if you cancel) so make can continue."; \
+	open -W -n -a Installer "$$pkg" || exit 1; \
+	echo; echo "==> 1. Helper + pinned sing-box (expect root wheel; sing-box r-xr-xr-x, helper r-xr--r--)"; \
+	ls -l /Library/PrivilegedHelperTools/oniongate-sing-box \
+		/Library/PrivilegedHelperTools/com.adamsiwiec.oniongate.helper; \
+	echo; echo "==> 2. Launch daemon"; \
+	launchctl print system/com.adamsiwiec.oniongate.helper 2>/dev/null | head -5 \
+		|| echo "    helper is not loaded — the install was cancelled or postinstall failed"; \
+	echo; echo "==> 3. Quarantine on the installed app (expect: No such xattr)"; \
+	xattr -p com.apple.quarantine /Applications/OnionGate.app 2>&1 || true; \
+	echo; echo "Launch OnionGate from /Applications and confirm Connect/Disconnect do not prompt for a password."
+
+macos-uninstall: ## Remove the installed macOS app, helper, pin, and leftover helper state
+	bash scripts/macos-pkg-reinstall.sh --uninstall-only
+
+macos-reinstall: ## Uninstall, rebuild the local .pkg, and install it (helper + pinned sing-box)
+	bash scripts/macos-pkg-reinstall.sh
 
 build-frontend: ## Typecheck and build the Vite frontend only
 	$(NPM) run build

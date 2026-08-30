@@ -10,17 +10,7 @@ use serde::{Deserialize, Serialize};
 static DB: Mutex<Option<Connection>> = Mutex::new(None);
 
 fn db_path() -> Result<PathBuf, String> {
-    let base = dirs::data_local_dir()
-        .ok_or_else(|| "Could not resolve local data directory".to_string())?
-        .join("tor-socks-gui");
-    std::fs::create_dir_all(&base).map_err(|e| format!("Failed to create data dir: {e}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| format!("Failed to protect data dir: {e}"))?;
-    }
-    Ok(base.join("session.db"))
+    Ok(crate::paths::data_dir()?.join("session.db"))
 }
 
 fn now_unix() -> i64 {

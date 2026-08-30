@@ -370,6 +370,57 @@ fn detect_other() -> Vec<DetectedApp> {
     Vec::new()
 }
 
+/// A known SOCKS-ignoring app that is live and uncontained in proxy mode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProxyBypassApp {
+    pub id: String,
+    pub title: String,
+}
+
+/// Stock bypassers that remain a leak even when an OnionGate launcher exists:
+/// the normal app still talks around OS SOCKS.
+const STOCK_BYPASS_ALWAYS: &[&str] = &["chrome", "discord", "slack"];
+
+pub fn uncontained_proxy_bypassers() -> Vec<ProxyBypassApp> {
+    uncontained_from(&detect_apps().apps)
+}
+
+fn uncontained_from(apps: &[DetectedApp]) -> Vec<ProxyBypassApp> {
+    apps.iter()
+        .filter(|app| app.installed && process_running(&app.process_names))
+        .filter(|app| is_uncontained_bypass(app))
+        .map(|app| ProxyBypassApp {
+            id: app.id.clone(),
+            title: app.title.clone(),
+        })
+        .collect()
+}
+
+fn is_uncontained_bypass(app: &DetectedApp) -> bool {
+    match app.id.as_str() {
+        "tor_browser" => false,
+        id if STOCK_BYPASS_ALWAYS.contains(&id) => true,
+        _ => !app.configured,
+    }
+}
+
+fn process_running(names: &[String]) -> bool {
+    names.iter().any(|name| process_name_running(name))
+}
+
+fn process_name_running(name: &str) -> bool {
+    if name.trim().is_empty() {
+        return false;
+    }
+    std::process::Command::new("pgrep")
+        .args(["-x", name])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 pub fn detect_apps() -> DetectReport {
     let apps = {
         #[cfg(target_os = "macos")]
@@ -576,4 +627,41 @@ pub fn exit_country_options() -> Vec<ExitCountryOption> {
         label: label.into(),
     })
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app(id: &str, title: &str, configured: bool) -> DetectedApp {
+        DetectedApp {
+            id: id.into(),
+            title: title.into(),
+            group: "browsers".into(),
+            description: String::new(),
+            installed: true,
+            configured,
+            detail: String::new(),
+            note: String::new(),
+            configure_label: String::new(),
+            can_remove: false,
+            process_names: vec!["__oniongate_never_running__".into()],
+            os: "macos".into(),
+        }
+    }
+
+    #[test]
+    fn stock_chrome_is_uncontained_even_when_a_launcher_exists() {
+        assert!(is_uncontained_bypass(&app("chrome", "Google Chrome", true)));
+        assert!(is_uncontained_bypass(&app("discord", "Discord", true)));
+        assert!(is_uncontained_bypass(&app("slack", "Slack", false)));
+    }
+
+    #[test]
+    fn configured_firefox_is_contained_unconfigured_is_not() {
+        assert!(!is_uncontained_bypass(&app("firefox", "Firefox", true)));
+        assert!(is_uncontained_bypass(&app("firefox", "Firefox", false)));
+        assert!(!is_uncontained_bypass(&app("cursor", "Cursor", true)));
+        assert!(!is_uncontained_bypass(&app("tor_browser", "Tor Browser", false)));
+    }
 }

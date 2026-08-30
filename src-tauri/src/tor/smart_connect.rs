@@ -81,7 +81,7 @@ async fn try_strategy(
     strategy: &str,
     timeout_secs: u64,
 ) -> Result<u32, String> {
-    settings::update(|s| {
+    let next = settings::update(|s| {
         s.last_connect_strategy = strategy.into();
         match strategy {
             "direct" => s.bridges_enabled = false,
@@ -92,6 +92,11 @@ async fn try_strategy(
             _ => s.bridges_enabled = !s.bridge_lines.is_empty(),
         }
     })?;
+    if next.strict_tcp_lock {
+        crate::firewall::enable_network_lock()
+            .await
+            .map_err(|e| format!("NIC lock could not follow {strategy}: {e}"))?;
+    }
     process::restart_managed(managed).await?;
     wait_bootstrap(timeout_secs).await
 }
@@ -118,6 +123,19 @@ pub async fn smart_connect(managed: &mut Option<Child>) -> Result<SmartConnectRe
     let mut attempts = Vec::new();
     let mut selected = None;
     for (strategy, timeout_secs, reason) in candidates {
+        if original.strict_tcp_lock {
+            let mut probe = original.clone();
+            probe.last_connect_strategy = strategy.to_string();
+            if strategy == "builtin:snowflake" {
+                probe.bridge_source = "builtin:snowflake".into();
+                probe.bridges_enabled = true;
+            }
+            if let Some(why) = super::endpoints::strategy_blocks_strict_lock(&probe) {
+                attempts.push(format!("{strategy}: skipped ({why})"));
+                crate::logs::append(format!("Smart Connect skipped {strategy}: {why}"));
+                continue;
+            }
+        }
         crate::logs::append(format!(
             "Smart Connect: network={key} trying={strategy} timeout={timeout_secs}s"
         ));
