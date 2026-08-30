@@ -11,6 +11,8 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Bundled Tor expert bundle pin moved to 15.0.20 after 15.0.19 was removed
+  from dist.torproject.org and broke release CI downloads.
 - Windows no longer flashes endless System32 console windows. Status polls,
   the tray, the clearnet watch, Tor/TUN helpers, and firewall checks spawn
   `powershell.exe` / `reg.exe` / `taskkill.exe` and related tools with

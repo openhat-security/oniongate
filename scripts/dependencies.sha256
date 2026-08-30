@@ -2,10 +2,10 @@
 # Tor values come from the Tor Project's signed-build checksum manifest.
 # sing-box does not publish a checksum asset; these values are independently
 # pinned after downloading the immutable GitHub release assets over TLS.
-5a8f19f5f119b5fa2a8fd799a3a532e3236ad36164241800d6302e32f0e1c2a9  tor-expert-bundle-linux-x86_64-15.0.19.tar.gz
-c99cf6f69740a443c7fffaf598ceb0952b3914041507c8afe11bed84a3333eb1  tor-expert-bundle-macos-aarch64-15.0.19.tar.gz
-95243f76bcf05d6179d017c3f3e4ece7b53cc58dff1ba617b03a2fe2c8298b5b  tor-expert-bundle-macos-x86_64-15.0.19.tar.gz
-6ac067402c7b4a3dc37887ed3754b3914b67fdc220c966190683e9ccf91abf0f  tor-expert-bundle-windows-x86_64-15.0.19.tar.gz
+3b39a2a7fbf43ef28b9ae0a6afca02a12935232f81769e4fef7472d6b5676eaf  tor-expert-bundle-linux-x86_64-15.0.20.tar.gz
+73fdccde8136678e41a625160993e6a9dc4f4ff8cd376318b5e41e5627d55682  tor-expert-bundle-macos-aarch64-15.0.20.tar.gz
+6ec3048b3a5d55e297f35d84830d0e338884d702aac3db49056633c1223841df  tor-expert-bundle-macos-x86_64-15.0.20.tar.gz
+d59bff934e3ad876e1623e24ae60c19aeea56f50178093b9f86fba230639f949  tor-expert-bundle-windows-x86_64-15.0.20.tar.gz
 73e8967b0fc08e17bce4263ca56ebc394822401a16497a1c4e02316c888202ab  sing-box-1.13.14-darwin-arm64.tar.gz
 5245d645e847f90bb708da74bc020ae078c28489690756419685c04f56b4e3bb  sing-box-1.13.14-darwin-amd64.tar.gz
 f48703461a15476951ac4967cdad339d986f4b8096b4eb3ff0829a500502d697  sing-box-1.13.14-linux-amd64.tar.gz
