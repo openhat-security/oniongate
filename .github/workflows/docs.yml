@@ -44,7 +44,7 @@ jobs:
         if: >-
           github.ref == 'refs/heads/main' &&
           github.event_name != 'pull_request' &&
-          github.repository == 'irruptio-security/oniongate'
+          github.repository == 'openhat-security/oniongate'
         env:
           TRAFFIC_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
           REPO: ${{ github.repository }}
@@ -72,7 +72,7 @@ jobs:
         if: >-
           github.ref == 'refs/heads/main' &&
           github.event_name != 'pull_request' &&
-          github.repository == 'irruptio-security/oniongate'
+          github.repository == 'openhat-security/oniongate'
         with:
           path: docs/.vitepress/dist
 
@@ -81,7 +81,7 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request' &&
-      github.repository == 'irruptio-security/oniongate'
+      github.repository == 'openhat-security/oniongate'
     runs-on: ubuntu-latest
     permissions:
       contents: read

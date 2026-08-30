@@ -415,7 +415,7 @@ jobs:
           app_bundle="$(printf '%s\n' src-tauri/target/"$TARGET"/release/bundle/macos/*.app | head -n 1)"
           test -d "$app_bundle"
           test -x "$app_bundle/Contents/MacOS/oniongate-helper"
-          test -x "$app_bundle/Contents/MacOS/oniongate"
+          test -x "$app_bundle/Contents/MacOS/OnionGate"
           dmg="$(printf '%s\n' src-tauri/target/"$TARGET"/release/bundle/dmg/*.dmg | head -n 1)"
           test -f "$dmg"
 
@@ -433,6 +433,29 @@ jobs:
               awk -F= '/^TeamIdentifier=/{print $2}'
           )"
           test "$helper_team" = "$APPLE_TEAM_ID"
+      # Tauri 2 has no pkg bundle target, so the installer is a post-bundle step
+      # built from the .app that tauri-action just produced. It uploads to the
+      # same draft release from inside this job, and `metadata` needs `build`,
+      # so the .pkg is already an asset when SHA256SUMS is assembled from them.
+      - name: Build and upload the macOS installer package
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          app_bundle="$(
+            printf '%s\n' src-tauri/target/"$TARGET"/release/bundle/macos/*.app | head -n 1
+          )"
+          bash scripts/build-macos-pkg.sh \
+            --app "$app_bundle" \
+            --target "$TARGET" \
+            --version "$VERSION"
+
+          pkg="$(printf '%s\n' src-tauri/target/"$TARGET"/release/bundle/pkg/*.pkg | head -n 1)"
+          test -f "$pkg"
+          gh release upload "$GITHUB_REF_NAME" "$pkg" --clobber
       - name: Verify Linux bundles
         if: runner.os == 'Linux'
         shell: bash
