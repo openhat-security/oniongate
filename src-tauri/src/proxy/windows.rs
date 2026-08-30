@@ -92,9 +92,7 @@ pub fn enable(saved: &mut SavedProxyState) -> Result<String, String> {
             "REG_DWORD",
             &saved.windows_proxy_enable.unwrap_or(0).to_string(),
         );
-        return Err(
-            "Windows SOCKS did not verify as enabled to the local Tor listener".into(),
-        );
+        return Err("Windows SOCKS did not verify as enabled to the local Tor listener".into());
     }
     Ok("Enabled Windows SOCKS proxy for WinINet-aware applications".into())
 }

@@ -56,9 +56,8 @@ fn absorb_legacy_dir(legacy: &Path, current: &Path) -> Result<(), String> {
         return Ok(());
     }
     if !current.exists() {
-        return fs::rename(legacy, current).map_err(|e| {
-            format!("Failed to migrate data directory from the previous name: {e}")
-        });
+        return fs::rename(legacy, current)
+            .map_err(|e| format!("Failed to migrate data directory from the previous name: {e}"));
     }
     merge_json_file(legacy, current, "settings.json")?;
     merge_sites_registry(legacy, current)?;
@@ -87,8 +86,8 @@ fn merge_json_file(legacy: &Path, current: &Path, name: &str) -> Result<(), Stri
     }
     let leftover_raw = fs::read_to_string(&leftover_path)
         .map_err(|e| format!("Failed to read leftover {name}: {e}"))?;
-    let current_raw = fs::read_to_string(&current_path)
-        .map_err(|e| format!("Failed to read {name}: {e}"))?;
+    let current_raw =
+        fs::read_to_string(&current_path).map_err(|e| format!("Failed to read {name}: {e}"))?;
     let Ok(leftover) = serde_json::from_str::<Value>(&leftover_raw) else {
         return Ok(());
     };
@@ -275,13 +274,21 @@ fn union_json_arrays(current: &Value, leftover: &Value) -> Option<Value> {
 }
 
 fn union_site_arrays(current: Option<&Value>, leftover: Option<&Value>) -> Option<Value> {
-    let mut out = current.and_then(Value::as_array).cloned().unwrap_or_default();
-    let leftover = leftover.and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut out = current
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let leftover = leftover
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     for site in leftover {
         let Some(id) = site.get("id").and_then(Value::as_str) else {
             continue;
         };
-        let exists = out.iter().any(|row| row.get("id").and_then(Value::as_str) == Some(id));
+        let exists = out
+            .iter()
+            .any(|row| row.get("id").and_then(Value::as_str) == Some(id));
         if !exists {
             out.push(site);
         }

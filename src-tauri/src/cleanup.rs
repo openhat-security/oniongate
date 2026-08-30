@@ -236,9 +236,7 @@ pub async fn teardown_session(
     //    nothing can race onto clearnet during teardown. Quit skips the helper
     //    when the lock is already down so the UI thread is not parked on IPC.
     let lock = firewall::network_lock_status();
-    let flush_lock = lock.active
-        || lock.marker_active
-        || mode != TeardownMode::RestoreHost;
+    let flush_lock = lock.active || lock.marker_active || mode != TeardownMode::RestoreHost;
     if !flush_lock {
         let _ = crate::session::expect_network_lock(false);
         logs::append("Network lock already clear");

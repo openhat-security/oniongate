@@ -242,11 +242,8 @@ async fn status() -> i32 {
 async fn start() -> i32 {
     let managed_tor = tokio::sync::Mutex::new(None);
     let managed_singbox = tokio::sync::Mutex::new(None);
-    let saved_proxy = std::sync::Mutex::new(
-        crate::session::load()
-            .original_proxy
-            .unwrap_or_default(),
-    );
+    let saved_proxy =
+        std::sync::Mutex::new(crate::session::load().original_proxy.unwrap_or_default());
     match crate::connect::bring_up(&managed_tor, &managed_singbox, &saved_proxy).await {
         Ok(msg) => {
             println!("{msg}");

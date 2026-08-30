@@ -116,9 +116,7 @@ pub fn enable(saved: &mut SavedProxyState) -> Result<String, String> {
         } else {
             let _ = gsettings_set("org.gnome.system.proxy", "mode", "'none'");
         }
-        return Err(
-            "GNOME SOCKS did not verify as enabled to the local Tor listener".into(),
-        );
+        return Err("GNOME SOCKS did not verify as enabled to the local Tor listener".into());
     }
 
     Ok("Enabled GNOME system SOCKS proxy to 127.0.0.1:9050".into())

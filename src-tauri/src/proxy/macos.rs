@@ -210,13 +210,19 @@ fn get_socks(service: &str) -> Result<MacosServiceSnapshot, String> {
     Ok(parse_socks_output(service, &out))
 }
 
-fn apply_socks_with(run_cmd: fn(&[&str]) -> Result<String, String>, service: &str) -> Result<(), String> {
+fn apply_socks_with(
+    run_cmd: fn(&[&str]) -> Result<String, String>,
+    service: &str,
+) -> Result<(), String> {
     run_cmd(&["-setsocksfirewallproxy", service, SOCKS_HOST, &socks_port()])?;
     run_cmd(&["-setsocksfirewallproxystate", service, "on"])?;
     Ok(())
 }
 
-fn apply_all(run_cmd: fn(&[&str]) -> Result<String, String>, plan: &ServicePlan) -> Result<(), String> {
+fn apply_all(
+    run_cmd: fn(&[&str]) -> Result<String, String>,
+    plan: &ServicePlan,
+) -> Result<(), String> {
     apply_socks_with(run_cmd, &plan.primary.name)?;
     for other in &plan.others {
         apply_socks_with(run_cmd, &other.name)?;
@@ -304,7 +310,9 @@ fn apply_and_verify(
         )
     });
     match restore_err {
-        Some(restore) => Err(format!("{err}. Also failed to restore previous SOCKS: {restore}")),
+        Some(restore) => Err(format!(
+            "{err}. Also failed to restore previous SOCKS: {restore}"
+        )),
         None => Err(err),
     }
 }
@@ -415,9 +423,11 @@ fn any_socks_at_tor() -> bool {
     let Ok(services) = list_service_order() else {
         return false;
     };
-    enabled_services(&services)
-        .iter()
-        .any(|svc| get_socks(&svc.name).ok().is_some_and(|s| socks_points_at_tor(&s)))
+    enabled_services(&services).iter().any(|svc| {
+        get_socks(&svc.name)
+            .ok()
+            .is_some_and(|s| socks_points_at_tor(&s))
+    })
 }
 
 pub(crate) fn disable_as_root(saved: &mut SavedProxyState) -> Result<String, String> {
@@ -440,7 +450,10 @@ fn disable_local(
         return Err("No enabled network services available to disable".into());
     }
     for svc in &enabled {
-        if get_socks(&svc.name).ok().is_some_and(|s| socks_points_at_tor(&s)) {
+        if get_socks(&svc.name)
+            .ok()
+            .is_some_and(|s| socks_points_at_tor(&s))
+        {
             run_cmd(&["-setsocksfirewallproxystate", &svc.name, "off"])?;
         }
     }
@@ -561,9 +574,16 @@ An asterisk (*) denotes that a network service is disabled.
 
     #[test]
     fn restore_turns_off_when_the_snapshot_was_off() {
-        assert!(!restore_previous_proxy(&snap("Wi-Fi", false, SOCKS_HOST, &socks_port())));
+        assert!(!restore_previous_proxy(&snap(
+            "Wi-Fi",
+            false,
+            SOCKS_HOST,
+            &socks_port()
+        )));
         assert!(!restore_previous_proxy(&snap("Wi-Fi", true, "", "9050")));
-        assert!(restore_previous_proxy(&snap("Wi-Fi", true, "10.0.0.1", "1080")));
+        assert!(restore_previous_proxy(&snap(
+            "Wi-Fi", true, "10.0.0.1", "1080"
+        )));
     }
 
     #[test]

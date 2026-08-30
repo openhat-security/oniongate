@@ -46,8 +46,7 @@ const SEEN_PATH: &str = "/Library/Application Support/OnionGate/filter/seen.json
 
 static ANNOUNCED_HELD: LazyLock<Mutex<std::collections::HashSet<u32>>> =
     LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
-static LAST_UNSEEN: LazyLock<Mutex<Vec<UnseenBypass>>> =
-    LazyLock::new(|| Mutex::new(Vec::new()));
+static LAST_UNSEEN: LazyLock<Mutex<Vec<UnseenBypass>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterVerdict {
@@ -140,11 +139,7 @@ pub fn classify(
     if is_tun_v4(remote_host) {
         return FilterVerdict::Allow;
     }
-    if allowlist
-        .tor_endpoints
-        .iter()
-        .any(|ip| ip == remote_host)
-    {
+    if allowlist.tor_endpoints.iter().any(|ip| ip == remote_host) {
         return FilterVerdict::Allow;
     }
     if is_local_oniongate_port(remote_port) && is_loopback(remote_host) {
@@ -357,7 +352,8 @@ pub fn reconcile_unseen(watch: &EgressWatch) -> Vec<UnseenBypass> {
         let (host, port) = split_remote(&flow.remote);
         let matched = seen.iter().any(|s| {
             s.unix >= cutoff
-                && (s.pid == flow.pid || (!host.is_empty() && s.remote_host == host && s.remote_port == port))
+                && (s.pid == flow.pid
+                    || (!host.is_empty() && s.remote_host == host && s.remote_port == port))
         }) || held.iter().any(|h| {
             h.unix >= cutoff
                 && (h.pid == flow.pid
@@ -455,11 +451,8 @@ fn run_ctl(command: &str) -> Result<String, String> {
         "oniongate-filter-ctl is not in this bundle. A signed .pkg build embeds the filter; unsigned debug stays on pf."
             .to_string()
     })?;
-    let output = run_timed(
-        Command::new(&ctl).arg(command),
-        CTL_TIMEOUT,
-    )
-    .map_err(|e| format!("Failed to run the filter activator: {e}"))?;
+    let output = run_timed(Command::new(&ctl).arg(command), CTL_TIMEOUT)
+        .map_err(|e| format!("Failed to run the filter activator: {e}"))?;
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if !output.status.success() {
         return Err(if stderr.is_empty() {
@@ -485,9 +478,7 @@ fn run_timed(cmd: &mut Command, limit: Duration) -> Result<std::process::Output,
         Ok(Ok(output)) => Ok(output),
         Ok(Err(e)) => Err(format!("wait failed: {e}")),
         Err(_) => {
-            let _ = Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .status();
+            let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
             let _ = rx.recv_timeout(Duration::from_millis(250));
             Err(format!("timed out after {}s", limit.as_secs()))
         }
@@ -535,8 +526,7 @@ fn bundle_present() -> bool {
 }
 
 pub fn heartbeat_live() -> bool {
-    read_heartbeat()
-        .is_some_and(|h| now_unix().saturating_sub(h.unix) <= HEARTBEAT_STALE_SECS)
+    read_heartbeat().is_some_and(|h| now_unix().saturating_sub(h.unix) <= HEARTBEAT_STALE_SECS)
 }
 
 #[cfg(target_os = "macos")]
@@ -683,7 +673,10 @@ mod tests {
             FilterVerdict::Allow
         );
         assert_eq!(classify("::1", 53, "udp", &list), FilterVerdict::Allow);
-        assert_eq!(classify("192.168.1.1", 67, "udp", &list), FilterVerdict::Allow);
+        assert_eq!(
+            classify("192.168.1.1", 67, "udp", &list),
+            FilterVerdict::Allow
+        );
         assert_eq!(
             classify("198.51.100.10", 443, "tcp", &list),
             FilterVerdict::Allow
@@ -734,10 +727,7 @@ enabled\tactive\tteamID\tbundleID (version)\tname\t[state]
 \t*\tTC292Y5427\tcom.expressvpn.vpn.splittunnel (1.0/1)\tSplit\t[activated disabled]
 *\t*\tVBG97UB4TA\tcom.objective-see.lulu.extension (4.3.1/4.3.1)\tLuLu\t[activated enabled]
 ";
-        assert_eq!(
-            parse_systemextension_row(list, FILTER_ID),
-            SysexRow::Absent
-        );
+        assert_eq!(parse_systemextension_row(list, FILTER_ID), SysexRow::Absent);
         let leftover = format!(
             "\t*\tNOTATEAM\t{FILTER_ID} (1.0/1)\tOnionGate\t[terminated waiting to uninstall on reboot]\n"
         );
@@ -752,9 +742,8 @@ enabled\tactive\tteamID\tbundleID (version)\tname\t[state]
             parse_systemextension_row(&waiting, FILTER_ID),
             SysexRow::WaitingForUser
         );
-        let enabled = format!(
-            "*\t*\tTEAMID\t{FILTER_ID} (1.0/1)\tOnionGate\t[activated enabled]\n"
-        );
+        let enabled =
+            format!("*\t*\tTEAMID\t{FILTER_ID} (1.0/1)\tOnionGate\t[activated enabled]\n");
         assert_eq!(
             parse_systemextension_row(&enabled, FILTER_ID),
             SysexRow::Enabled

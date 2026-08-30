@@ -662,6 +662,10 @@ mod tests {
         assert!(!is_uncontained_bypass(&app("firefox", "Firefox", true)));
         assert!(is_uncontained_bypass(&app("firefox", "Firefox", false)));
         assert!(!is_uncontained_bypass(&app("cursor", "Cursor", true)));
-        assert!(!is_uncontained_bypass(&app("tor_browser", "Tor Browser", false)));
+        assert!(!is_uncontained_bypass(&app(
+            "tor_browser",
+            "Tor Browser",
+            false
+        )));
     }
 }

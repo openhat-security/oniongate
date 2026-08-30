@@ -227,7 +227,6 @@ pub async fn set_remote_dns(state: State<'_, AppState>, enabled: bool) -> Result
     }
 }
 
-
 #[tauri::command]
 pub async fn arm_network_lock() -> Result<String, String> {
     crate::session::begin_connect()?;

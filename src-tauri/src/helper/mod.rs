@@ -344,7 +344,8 @@ fn load_helper_socks_snapshot() -> Option<crate::proxy::SavedProxyState> {
 fn save_helper_socks_snapshot(saved: &crate::proxy::SavedProxyState) -> Result<(), String> {
     let raw = serde_json::to_vec(saved).map_err(|e| e.to_string())?;
     let temp = format!("{HELPER_SOCKS_RESTORE}.tmp");
-    std::fs::write(&temp, raw).map_err(|e| format!("Failed to store SOCKS restore snapshot: {e}"))?;
+    std::fs::write(&temp, raw)
+        .map_err(|e| format!("Failed to store SOCKS restore snapshot: {e}"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -552,7 +553,8 @@ mod tests {
         for req in [HelperRequest::SocksEnable, HelperRequest::SocksDisable] {
             let text = String::from_utf8(encode(&req).unwrap()).unwrap();
             assert!(
-                text.contains("\"op\":\"socks_enable\"") || text.contains("\"op\":\"socks_disable\"")
+                text.contains("\"op\":\"socks_enable\"")
+                    || text.contains("\"op\":\"socks_disable\"")
             );
             for forbidden in ["service", "host", "port", "server", "networksetup"] {
                 assert!(
