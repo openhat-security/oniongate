@@ -7,7 +7,7 @@ software whose own licenses continue to apply.
 
 | Component | Purpose | Version/source |
 | --- | --- | --- |
-| Tor expert bundle | Tor client, GeoIP data, runtime libraries, transports | 15.0.19 from `dist.torproject.org` |
+| Tor expert bundle | Tor client, GeoIP data, runtime libraries, transports | 15.0.20 from `dist.torproject.org` |
 | lyrebird / obfs4proxy alias | obfs4, WebTunnel, and bundled transport support | From the verified Tor bundle |
 | Conjure client | Refraction Networking transport, when present for the target | From the verified Tor bundle |
 | OpenSSL and libevent | Tor runtime dependencies where included | From the verified Tor bundle |
