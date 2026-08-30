@@ -6,11 +6,17 @@ This page is the concrete inventory.
 
 ## Local data directory
 
-The current internal directory name predates the OnionGate name:
+- macOS: `~/Library/Application Support/oniongate/`
+- Linux: `~/.local/share/oniongate/`
+- Windows: `%LOCALAPPDATA%\oniongate\`
 
-- macOS: `~/Library/Application Support/tor-socks-gui/`
-- Linux: `~/.local/share/tor-socks-gui/`
-- Windows: `%LOCALAPPDATA%\tor-socks-gui\`
+Older builds used `tor-socks-gui` in the same parent folder. Every launch
+renames that directory to `oniongate` when the new name is absent. When both
+names exist, leftover settings are merged into `oniongate` (current wins on
+conflict; empty lists and leftover-only keys are filled from the old file)
+and unique permanent-site directories are moved, not copied. OnionGate never
+writes the leftover name. An old binary still can; the next launch absorbs
+those writes.
 
 Do not sync this directory to cloud storage. It can contain permanent onion-site
 keys owned by Tor. On Unix, OnionGate enforces mode `0700` on the directory and
@@ -33,7 +39,7 @@ or another process running as your user remains in scope.
 | Verification reports | newest 20 rows in `session.db` | Results and remediation, no public IP values |
 | Startup baseline | `persistence-baseline.json`, until replaced/removed | Local startup paths and signature metadata |
 | Generated helper service files | local data plus platform service paths | Allowed UID and service configuration |
-| App bypass helpers | target app settings, `~/.tor-socks-gui/`, `/etc/tor-socks-gui/`, and user launcher locations | Proxy configuration and local paths |
+| App bypass helpers | target app settings, `~/.oniongate/`, `/etc/oniongate/`, and user launcher locations | Proxy configuration and local paths |
 
 The session database keeps session start/end times, selected strategy and mode,
 live byte totals/rates, circuit counts, and identity-change counts. It does not
@@ -45,6 +51,24 @@ Firefox `user.js`, Cursor/VS Code settings, Claude Code settings, shell startup
 files, and separate Chrome/Discord/Slack launchers. The Apps page shows and
 removes the known OnionGate-managed configuration; see
 [Route applications](/guide/apps).
+
+## Memory-only session state
+
+Two features keep their state in process memory only, on purpose, and never
+touch disk:
+
+- **Reopen-through-Tor ledger.** When OnionGate closes an application (a GUI
+  quit, or a clearnet kill), it remembers only a **display label and the `.app`
+  bundle path** so it can relaunch it through Tor afterward. It never records
+  the command line, arguments, or environment — an argument that itself ends in
+  `.app` is refused rather than mistaken for the bundle — and the serialized
+  entry has exactly those two string fields. The ledger is cleared on teardown,
+  so a later session can never relaunch something a previous one closed.
+- **Clearnet alert payload.** The list of leaking processes shown by the
+  clearnet alert window is passed to a single webview over one Tauri event and
+  held in memory only. It is deliberately not a macOS notification: notification
+  text is routed through Apple's infrastructure and would carry the process name
+  off the device. The set is reset on teardown.
 
 ## Onion Host secrets
 
@@ -121,6 +145,13 @@ SHA-256 is absent from or does not match `scripts/dependencies.sha256`.
 
 Installing MacPorts or opening external operating-system help uses the system
 browser and is outside OnionGate's network boundary.
+
+### Project links
+
+**See the docs** and **OpenHat Security** (sidebar and Settings) open the
+published docs site or the OnionGate GitHub repository in the system browser
+when you click them. The UI sends only an allowlisted tag; it cannot supply a
+URL. Those page loads use the ordinary network path, not Tor.
 
 ## What is never uploaded automatically
 

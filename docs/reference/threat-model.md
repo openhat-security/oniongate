@@ -34,7 +34,8 @@ OnionGate aims to:
 - Malware prevention, exploit containment, or a general endpoint-security
   product.
 - Paths listed in [Residual leaks](/reference/residual-leaks), including NECP
-  flows that never hit `pf` and the same-host Tor-endpoint allowlist hole.
+  flows that never hit `pf`, Apple processes hidden from a Network Extension,
+  and the same-host Tor-endpoint allowlist hole.
 - UDP tunnelling, torrenting, streaming, gaming, or stable geolocation.
 - Protecting a local onion service that is itself vulnerable.
 - Guaranteeing that a moved, renamed, helper, or child process still matches a
@@ -62,6 +63,16 @@ boundary. Under **Only selected via Tor**, unmatched applications are also
 deliberately direct. Under **All except selected**, selected applications are
 deliberately direct and the Tor-routed remainder shares a default isolation
 context.
+
+### Connection filter (macOS Network Extension)
+
+The optional filter is a LuLu-style `NEFilterDataProvider`. It holds and
+drops outbound flows that are not already loopback, DHCP, TUN, or a live Tor
+endpoint. It is **not** the enforcement path. `pf` and TUN remain the
+fail-closed lock. The provider’s default verdict is drop. Apple can hide
+processes from the extension and can fail open when the framework floods or
+the extension crashes; that is treated as a residual and marks the session
+Degraded. There is no persistent “allow this app on clearnet” rule.
 
 ### Session Guard
 
@@ -118,7 +129,9 @@ The leak verifier is a live diagnostic, not a packet capture or formal proof. It
 - inspects whether TUN is running or an OnionGate UDP firewall rule is live;
 - checks for an IPv6 default route;
 - reconciles selected-app settings with active TUN;
-- checks Session Guard preconditions and the recovery journal.
+- checks Session Guard preconditions and the recovery journal;
+- on macOS, reports whether the connection filter is up and whether any live
+  clearnet flow never reached it (Apple exclusion or fail-open).
 
 It does not observe every application's DNS or packets, send a UDP/IPv6 leak
 probe, force a Session Guard failure, or prove a running process matched its

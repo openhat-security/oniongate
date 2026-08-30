@@ -16,9 +16,19 @@ without treating an entire supported OS as incomplete.
 | Session Guard process suspension | Yes | Yes | — |
 | App detection and bypass helpers | Yes | Yes | — |
 | Workstation Checkup / Startup Items | Yes | — | — |
-| OS hardening | Yes | — | — |
+| OS hardening (incl. MAC randomization, Wi-Fi at boot) | Yes | — | — |
+| Clearnet leak detection + in-app alert | Yes | Yes | Yes |
+| Reopen-through-Tor after a close/kill | Yes | — | — |
+| In-bundle uninstaller (`.pkg`) | Yes | — | — |
+| Helper-backed TUN / Wi-Fi / MAC via helper | Yes | — | — |
 | Privileged-helper service | Yes | Yes | Yes |
 | CI compile/test | macOS 15 ARM/Intel | Ubuntu 22.04 | Windows 2022 |
+
+The hardening, reopen-through-Tor, and uninstaller features are **macOS-first**.
+The clearnet leak **detection and in-app alert** are cross-platform, but the
+reopen, in-bundle uninstaller, and host-hardening items are macOS-only and are
+inert no-ops elsewhere. Linux and Windows parity for these is on the roadmap,
+not shipped.
 
 ## macOS
 
@@ -101,5 +111,5 @@ currently no stable tagged release. Until the stable release gates pass, builds
 on every platform are prerelease software and should not be the sole control for
 high-risk activity.
 
-See the [security policy](https://github.com/irruptio-security/oniongate/blob/main/SECURITY.md)
+See the [security policy](https://github.com/openhat-security/oniongate/blob/main/SECURITY.md)
 and [threat model](/reference/threat-model).

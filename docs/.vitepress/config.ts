@@ -1,6 +1,6 @@
 import { defineConfig } from "vitepress";
 
-const repo = "https://github.com/irruptio-security/oniongate";
+const repo = "https://github.com/openhat-security/oniongate";
 
 export default defineConfig({
   title: "OnionGate",
@@ -14,7 +14,7 @@ export default defineConfig({
   lastUpdated: true,
   ignoreDeadLinks: false,
   sitemap: {
-    hostname: "https://irruptio-security.github.io/oniongate/",
+    hostname: "https://openhat-security.github.io/oniongate/",
   },
   head: [
     ["link", { rel: "icon", href: "/oniongate/logo.png" }],
@@ -33,7 +33,7 @@ export default defineConfig({
       "meta",
       {
         property: "og:image",
-        content: "https://irruptio-security.github.io/oniongate/logo.png",
+        content: "https://openhat-security.github.io/oniongate/logo.png",
       },
     ],
   ],
@@ -135,7 +135,7 @@ export default defineConfig({
     footer: {
       message:
         "GPL-3.0. An independent project, not affiliated with or endorsed by The Tor Project.",
-      copyright: "© Irruptio Security",
+      copyright: "Copyright (C) 2026 OpenHat Security",
     },
   },
 });

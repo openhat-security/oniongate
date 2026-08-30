@@ -12,7 +12,8 @@ make downloads
 The build is unsigned and intended for local testing. The command prints the
 exact output paths:
 
-- macOS: `src-tauri/target/<target>/release/bundle/dmg/*.dmg`
+- macOS: `src-tauri/target/<target>/release/bundle/pkg/*.pkg` (primary) and
+  `src-tauri/target/<target>/release/bundle/dmg/*.dmg`
 - Windows: `src-tauri/target/<target>/release/bundle/nsis/*-setup.exe`
 - Linux: AppImage, DEB, and RPM directories under
   `src-tauri/target/<target>/release/bundle/`
@@ -23,6 +24,34 @@ Cursor/Terminal automation permission to control Finder.
 The DMG contains `OnionGate.app`. A macOS machine builds its own architecture;
 Windows and Linux installers should be built natively on those systems. GitHub
 release CI builds every supported target with signing and provenance.
+
+### The macOS installer package
+
+Tauri has no `pkg` bundle target, so the installer is a post-bundle step:
+`scripts/build-macos-pkg.sh` takes the `.app` that Tauri produced and drives
+Apple's `pkgbuild` and `productbuild`. `make downloads` runs it automatically,
+and CI runs the same script on both macOS targets, so a local `.pkg` is built
+the same way a released one is.
+
+To rebuild only the installer after a bundle already exists:
+
+```bash
+make macos-pkg
+```
+
+The package installs to `/Applications` with no option to change that, and its
+postinstall script registers the privileged helper and pins the `sing-box`
+sidecar to a root-owned path. It also injects the uninstaller into the bundle
+as `Contents/Resources/uninstall.command`, which is why the `.dmg` — built by
+Tauri, untouched by this script — does not carry one.
+
+Local packages are unsigned. Set `PKG_SIGNING_IDENTITY` to a Developer ID
+Installer identity if you have one; without it `productbuild` still succeeds
+and Gatekeeper prompts on the first double-click.
+
+The updater is unaffected. macOS updates continue to ship as `.app.tar.gz`
+payloads, and `scripts/build-updater-manifest.mjs` matches on that suffix, so
+adding a `.pkg` to a release changes nothing about **Check for updates**.
 
 ::: warning Local bundles are unsigned
 `make downloads` deliberately passes `--no-sign`. Gatekeeper, Authenticode, and
@@ -54,7 +83,7 @@ key stays offline and in GitHub Actions secrets.
 When the user selects **Settings → Check for updates**:
 
 1. OnionGate requests
-   `https://github.com/irruptio-security/oniongate/releases/latest/download/latest.json`;
+   `https://github.com/openhat-security/oniongate/releases/latest/download/latest.json`;
 2. the manifest selects the current OS and architecture;
 3. Tauri downloads the updater payload;
 4. the embedded public key verifies its signature;

@@ -15,7 +15,15 @@ Read the [threat model](/reference/threat-model) with this list.
   show it.
 - **Same-host allowlist hole.** Any local process may open TCP to a listed Tor
   endpoint IP without speaking the Tor protocol. Stopping that needs a second
-  machine or a process-aware filter Apple can exempt.
+  machine. The optional connection filter can hold other flows; it cannot close
+  this hole.
+- **Connection filter (Network Extension) is not a second lock.** It supplements
+  `pf`. Apple’s `ContentFilterExclusionList` hides some system processes from
+  `NEFilterDataProvider`. If the framework floods or the extension crashes,
+  macOS stops delivering flows and defaults to allow. OnionGate’s provider
+  still defaults to drop for flows it sees; flows it never sees mark the
+  session **Degraded**. Loading the extension needs Apple Developer Program
+  enrollment. Do not disable SIP to “see Apple traffic.”
 - **Helper authentication on unsigned debug builds is UID, not code signature.**
   Same-user malware can ask that helper to disable the lock. A signed macOS
   helper also requires the peer's Team ID / `com.adamsiwiec.oniongate`

@@ -79,13 +79,17 @@ Use the **Apps** page for known bypass-prone software, or use TUN when you need 
 stronger system routing boundary.
 
 The operating-system SOCKS setting is not a Connect-page toggle. Choose **Proxy**
-or **TUN** under Routing; **Settings → Preferences** controls whether Proxy mode
-auto-enables the OS proxy after connect. The Current IP card shows the live path
-(Direct, SOCKS, system proxy, or TUN) as status only.
+or **TUN** under Routing. System proxy mode always enables and verifies OS SOCKS
+on the live default-route service after Tor is up; **Settings → Preferences**
+only controls whether other modes also apply SOCKS on Connect. The Current IP
+card shows the live path (Direct, SOCKS, system proxy, or TUN) as status only.
 
 On disconnect, OnionGate restores the proxy state it captured before enabling
 its own proxy. If no captured snapshot is available, it disables only its SOCKS
-configuration.
+configuration. If apply or primary verify fails, that restore runs immediately
+instead of leaving leftover SOCKS until Disconnect. On macOS, a user-level
+`networksetup` failure is retried through the privileged helper; if the helper
+is not running, Connect fails closed.
 
 ## TUN mode
 
@@ -124,7 +128,10 @@ resolution.
 
 Before Tor bootstraps, while Tor restarts, and while a session tears down,
 OnionGate arms a **network lock** so clearnet cannot be used during the gap —
-the same idea as a VPN that blocks traffic while reconnecting.
+the same idea as a VPN that blocks traffic while reconnecting. That lock is
+not installed at power-on. If you want no clearnet between restarts, turn on
+**Block the network at boot** under System → Harden (recommended with Start
+OnionGate at login and Connect on launch).
 
 The lock always blocks clearnet **UDP/QUIC** and **IPv6** (loopback stays open
 for Tor's local SOCKS/control/DNS ports). On Windows it also blocks clearnet
@@ -147,11 +154,31 @@ DHCP, and OnionGate Tor’s allowlisted endpoints. That is the control that stop
 Apple Push and other daemons from using the WAN IP.
 
 TCP fail-closed without that lock still comes from TUN `strict_route` and
-Session Guard. Proxy-only apps that ignore SOCKS can still make direct TCP
-unless the NIC lock is on.
+Session Guard. In proxy mode without the NIC lock, Connect stays **Degraded**
+while known SOCKS-ignoring apps are running uncontained. TUN or the NIC lock
+can still report Protected.
 
 See [Residual leaks](/reference/residual-leaks) for what the lock does not
 cover.
+
+## Connection filter (macOS)
+
+On a signed macOS build, Harden can load a Network Extension that intercepts
+new outbound flows, allows only traffic that is already Tor or OnionGate, and
+drops everything else. The in-app alert then says the connection was
+**stopped**, not that it already leaked.
+
+This is a supplement, not a replacement for `pf` or TUN. Apple can hide some
+of its own processes from the filter, and a crashed or flooded extension can
+fail open. Home and Verify show when the filter is up and when a live
+clearnet flow never reached it. That case is **Degraded**, not Protected.
+
+Unsigned and ad-hoc debug builds do not load the extension. They stay on the
+packet lock and the after-the-fact socket watch. Turning **Connection filter**
+off in Settings means Connect will not require the extension even if it is
+installed.
+
+There is no “Allow this app on clearnet.” That would be a destination hole.
 
 When the setting is saved, Connect re-applies the firewall rule in either Proxy
 or TUN mode. A requested rule that fails prevents a Protected badge.

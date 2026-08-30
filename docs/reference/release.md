@@ -120,6 +120,18 @@ the private key or password.
 
 These are optional for `0.x` and mandatory from `1.0.0` onward.
 
+The optional macOS **connection filter** is a Network System Extension
+(`content-filter-provider-systemextension`). It will not load on unsigned or
+ad-hoc Debug the way the privileged helper can. Shipping it needs an Apple
+Developer ID **network-extension** provisioning profile, the host-app
+entitlements in `scripts/macos-pkg/OnionGate.entitlements`, and user approval
+in System Settings → General → Login Items & Extensions → Network Extensions.
+Do not attach those entitlements to
+unsigned `tauri.conf.json` builds: they would fail to launch. Unsigned `.pkg`
+and `make dev` stay on `pf` plus the after-the-fact socket watch — they do
+not embed the system extension (set `EMBED_FILTER=1` or a Developer ID
+identity to ship it).
+
 macOS requires:
 
 - `APPLE_CERTIFICATE`
@@ -136,7 +148,7 @@ Windows signing uses:
 - `WINDOWS_CERTIFICATE_PASSWORD`
 
 The full setup procedure lives in
-[`.github/RELEASE_SECRETS.md`](https://github.com/irruptio-security/oniongate/blob/main/.github/RELEASE_SECRETS.md).
+[`.github/RELEASE_SECRETS.md`](https://github.com/openhat-security/oniongate/blob/main/.github/RELEASE_SECRETS.md).
 That file documents names and procedures only; values stay in repository
 secrets.
 
@@ -193,7 +205,7 @@ Pages must be enabled once by a repository admin, because the workflow token
 cannot perform that owner-level setup:
 
 ```bash
-gh api -X POST repos/irruptio-security/oniongate/pages -f build_type=workflow
+gh api -X POST repos/openhat-security/oniongate/pages -f build_type=workflow
 ```
 
 The equivalent UI path is **Settings → Pages → Source: GitHub Actions**. Only

@@ -8,7 +8,8 @@ TUN policies for routing selected applications through distinct Tor circuits.
 There are three separate mechanisms:
 
 1. **System proxy** — easiest, but only applications that honor SOCKS are
-   protected.
+   protected. Connect refuses a Protected badge while known stock bypassers
+   are running and the NIC lock is off.
 2. **Bypass helpers** — modify a known application's own proxy configuration or
    install a separate launcher that forces SOCKS.
 3. **TUN app routing** — matches stable application identities in sing-box and
@@ -22,8 +23,8 @@ fingerprinting, extensions, and local profile state remain visible.
 Shell proxy writes standard proxy environment variables for command-line tools.
 
 - **Off** removes OnionGate's shell hook and environment file.
-- **Manual** writes `/etc/tor-socks-gui/env`; explicitly run
-  `source /etc/tor-socks-gui/env` in a shell that should use it.
+- **Manual** writes `/etc/oniongate/env`; explicitly run
+  `source /etc/oniongate/env` in a shell that should use it.
 - **Auto** also installs a hook in supported shell startup files so new shells
   source OnionGate's environment automatically.
 
