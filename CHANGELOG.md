@@ -7,6 +7,8 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-08-30
+
 ### Fixed
 
 - Windows no longer flashes endless System32 console windows. Status polls,
