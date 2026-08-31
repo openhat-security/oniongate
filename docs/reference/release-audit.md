@@ -14,15 +14,8 @@ not a substitute for the user-facing [changelog](/reference/changelog).
 Do not paste bridge lines, onion keys, credentials, public IPs, or full
 command lines into commit subjects.
 
-## 0.2.4
+## 0.2.5-alpha.1
 
-Range: `v0.2.3..HEAD`.
+Range: `v0.2.4..HEAD`.
 
-- `59735ab fix: rustfmt so Actions can ship the 0.2.4 release`
-- `d350289 docs: note Tor expert bundle 15.0.20 in third-party reference`
-- `0ead253 fix: pin Tor expert bundle to 15.0.20 for release downloads`
-- `600ba0c Merge pull request #2 from openhat-security/release/0.2.4`
-- `54743bb chore: prepare 0.2.4 release`
-- `01c3222 chore(ci): align issue templates and release workflows with openhat-security`
-- `ed2c5ba docs: refresh guides and reference for the 0.2.4 features`
-- `d3c0cf3 feat: ship connection filter, boot lock, pkg installer, and fail-closed session work`
+- `b0fa3c7 fix(windows): embed Common-Controls v6 so cargo test can load`

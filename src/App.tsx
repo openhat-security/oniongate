@@ -43,7 +43,7 @@ import {
 } from "@/lib/reopen";
 import { cn } from "@/lib/utils";
 import { effectiveLocale } from "@/lib/i18n";
-import { releaseChannel } from "@/lib/release";
+import { releaseChannel, channelLabel, isStableChannel } from "@/lib/release";
 import { startWindowDrag } from "@/lib/drag";
 import {
   readSidebarCollapsed,
@@ -64,6 +64,7 @@ export default function App() {
   const app = useTorApp();
   const version = useAppVersion();
   const channel = releaseChannel(version);
+  const channelName = channelLabel(channel);
   const locale = effectiveLocale(app.settings?.locale);
   const showWizard = !!app.settings && !app.settings.setup_complete;
 
@@ -100,13 +101,14 @@ export default function App() {
     disarmReopenThroughTor();
   }, [reopen.phase, app.busy, app.status?.session_phase]);
 
+  // Match the backend popup and docs: only a verified Protected session
+  // surfaces the kill modal. Connect/Degraded clearnet sockets are expected.
   useEffect(() => {
-    if (!app.torOn) {
+    if (!app.torOn || app.status?.session_phase !== "protected") {
       setClearnetAlert(false);
-      setClearnetAlertDismissed(false);
+      if (!app.torOn) setClearnetAlertDismissed(false);
       return;
     }
-    if (app.status?.session_phase === "connecting") return;
     const processes = app.egressWatch?.clearnet_processes ?? [];
     if (clearnetAlert && processes.length === 0) {
       setClearnetAlert(false);
@@ -114,6 +116,9 @@ export default function App() {
     }
     if (clearnetAlertDismissed || clearnetAlert) return;
     if (!app.egressWatch?.watching || processes.length === 0) return;
+    // Backend announce only includes killable pids; keep the in-app modal
+    // aligned so Windows shell noise never forces a Kill prompt.
+    if (!processes.some((item) => item.killable)) return;
     setClearnetAlert(true);
   }, [app.torOn, app.status?.session_phase, app.egressWatch, clearnetAlert, clearnetAlertDismissed]);
 
@@ -188,8 +193,20 @@ export default function App() {
                   OnionGate
                 </div>
                 {version ? (
-                  <div className="truncate text-[10px] text-rail-muted">
-                    {version} {channel}
+                  <div className="mt-0.5 flex items-center gap-1.5">
+                    <span className="truncate text-[10px] text-rail-muted">
+                      {version}
+                    </span>
+                    <span
+                      className={cn(
+                        "shrink-0 rounded px-1 py-px text-[9px] font-semibold uppercase tracking-wide",
+                        isStableChannel(channel)
+                          ? "bg-white/10 text-rail-muted"
+                          : "bg-warn/20 text-warn-strong",
+                      )}
+                    >
+                      {channelName}
+                    </span>
                   </div>
                 ) : null}
               </div>
@@ -266,7 +283,14 @@ export default function App() {
               <p className="text-[10px] leading-tight text-rail-muted">
                 {version}
                 <br />
-                {channel}
+                <span
+                  className={cn(
+                    "font-semibold uppercase tracking-wide",
+                    isStableChannel(channel) ? "" : "text-warn-strong",
+                  )}
+                >
+                  {channelName}
+                </span>
               </p>
             ) : null}
             {!collapsed ? (

@@ -20,7 +20,10 @@ alwaysApply: false
   `make changelog-check` on every PR and `check-release.mjs` on the tag.
 - Release tags must point to commits reachable from `main` or `staging`.
   Staging-origin releases are always prereleases; feature branches never build
-  downloadable artifacts.
+  downloadable artifacts. Until the stable gate passes, prefer
+  `vX.Y.Z-alpha.N` (semver prerelease). Any hyphenated version is a GitHub
+  prerelease and never Latest. Do not retag already-published plain `0.x`
+  releases.
 - Keep the release matrix serialized while `tauri-action` merges platform
   entries into `latest.json`. Every release must include macOS ARM64/Intel,
   Linux x86_64, Windows x86_64, and the signed privileged helper.

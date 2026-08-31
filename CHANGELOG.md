@@ -7,8 +7,21 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.5-alpha.1] - 2026-08-30
+
+### Changed
+
+- Future release tags use semver alphas such as `0.2.5-alpha.1` (GitHub
+  prerelease, never Latest). Already-published plain `v0.2.x` tags stay as-is.
+  The Connect home screen and About/settings copy label the build as Alpha so
+  the channel is unmistakable.
+
 ### Fixed
 
+- Windows clearnet alerts no longer treat packaged OS shells under
+  `SystemApps` / `WindowsApps` (for example Start Menu) as kill targets, and
+  the in-app "Processes not through Tor" modal only opens while Protected when
+  at least one killable process is present — matching the backend popup and docs.
 - Windows CI `cargo test` no longer dies at load with `STATUS_ENTRYPOINT_NOT_FOUND`.
   The Common-Controls v6 manifest is linked into every MSVC artifact (including
   the lib test harness), not only `[[bin]]` targets.

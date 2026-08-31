@@ -1,6 +1,6 @@
 [package]
 name = "oniongate"
-version = "0.2.4"
+version = "0.2.5-alpha.1"
 description = "OnionGate — Tor Workstation Toolkit with isolated routing and Onion Host"
 authors = ["adamsiwiec"]
 edition = "2021"

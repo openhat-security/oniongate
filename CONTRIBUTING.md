@@ -82,16 +82,21 @@ issues.
 
 ## Preparing a release
 
+Until the stable gate in `docs/reference/release.md` passes, ship **alpha**
+semver prereleases such as `0.2.5-alpha.1` (tag `v0.2.5-alpha.1`). Do not rewrite
+already-published plain `v0.2.x` tags. Hyphenated versions and staging-origin
+tags are GitHub prereleases and never Latest.
+
 Invoke the project `release-changelog` Cursor skill with the intended version.
 Run it only from a clean `main` or `staging` checkout. Review its
 complete-history changelog and version diff, then run:
 
 ```bash
-make release-check VERSION=0.2.1
+make release-check VERSION=0.2.5-alpha.1
 make release-bundle-local   # unsigned host-platform packaging smoke test
 ```
 
-Merge that preparation before creating `v0.2.1`. Tag-triggered release CI
-refuses mismatched versions or a missing dated changelog section and creates
+Merge that preparation before creating `v0.2.5-alpha.1`. Tag-triggered release
+CI refuses mismatched versions or a missing dated changelog section and creates
 only a draft for maintainer review. Tags outside `main`/`staging` are rejected;
 staging-origin drafts are always prereleases.

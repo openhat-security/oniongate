@@ -92,17 +92,22 @@ When the user selects **Settings → Check for updates**:
 A missing or invalid signature fails the update. OnionGate never bypasses the
 check.
 
-## Stable and staging channels
+## Alpha, staging, and stable channels
 
 Tags must point to commits on `main` or `staging`.
 
-- `main` produces the normal release channel.
+- While the product is alpha, `main` tags use semver prereleases such as
+  `v0.2.5-alpha.1`. Release CI marks them GitHub prereleases (never Latest).
 - `staging` always produces a prerelease for manual testing.
+- A plain stable tag (for example `v1.0.0`) may become Latest only after the
+  [stable-release gate](/reference/release#stable-release-gate).
 
 GitHub's `/releases/latest/` endpoint excludes drafts and prereleases. Therefore
-the built-in updater follows published non-prerelease releases only. Staging
-installers are downloaded and tested manually; they do not replace the stable
-update channel.
+the built-in updater follows published non-prerelease releases only. Alpha and
+staging installers are downloaded from the Releases page (and verified against
+`SHA256SUMS`); they do not replace the Latest update channel until a stable
+release exists. Already-published plain `v0.2.x` tags are left as-is — do not
+retag them.
 
 ## Trust-root warning
 

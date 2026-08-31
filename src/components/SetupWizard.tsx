@@ -7,7 +7,7 @@ import { PRESETS, presetPatch, type PresetId } from "@/lib/presets";
 import { StrictLockConsent } from "@/components/DenyAlert";
 import { cn } from "@/lib/utils";
 import { startWindowDrag } from "@/lib/drag";
-import { releaseChannel } from "@/lib/release";
+import { channelLabel, releaseChannel } from "@/lib/release";
 import { useAppVersion } from "@/hooks/useAppVersion";
 
 const STEPS = ["Welcome", "Choose a preset", "Permissions", "Finish"];
@@ -16,6 +16,7 @@ export function SetupWizard({ app }: { app: TorApp }) {
   const isMac = app.detect?.os === "macos";
   const version = useAppVersion();
   const channel = releaseChannel(version);
+  const channelName = channelLabel(channel);
   const [step, setStep] = useState(0);
   const [preset, setPreset] = useState<PresetId>("everyday");
   const [lockConsent, setLockConsent] = useState(false);
@@ -200,7 +201,8 @@ export function SetupWizard({ app }: { app: TorApp }) {
                 live routing and leak-prevention boundary.
               </p>
               <p className="rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-muted">
-                This build is <span className="font-semibold text-ink">{channel}</span> — not
+                This build is{" "}
+                <span className="font-semibold text-ink">{channelName}</span> — not
                 a sole control for high-risk work. It is not a VPN, Tor Browser, or
                 antivirus. Read the threat model and residual leaks before relying on
                 it. This wizard sets defaults you can change anytime.

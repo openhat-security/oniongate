@@ -15,7 +15,7 @@ import { StrictLockConsent } from "@/components/DenyAlert";
 import { ProjectLink } from "@/components/ProjectLink";
 import { UninstallDialog } from "@/components/UninstallDialog";
 import { useAppVersion } from "@/hooks/useAppVersion";
-import { releaseChannel } from "@/lib/release";
+import { channelLabel, releaseChannel } from "@/lib/release";
 
 type HelperStatus = {
   supported: boolean;
@@ -40,6 +40,7 @@ export function SettingsPage({ app }: { app: TorApp }) {
   const [uninstall, setUninstall] = useState(false);
   const version = useAppVersion();
   const channel = releaseChannel(version);
+  const channelName = channelLabel(channel);
 
   const refreshHelper = () =>
     invoke<HelperStatus>("privileged_helper_status")
@@ -82,8 +83,9 @@ export function SettingsPage({ app }: { app: TorApp }) {
       <header>
         <h2 className="text-xl font-semibold tracking-tight">Settings</h2>
         <p className="mt-1 text-sm text-muted">
-          Defaults, DNS, and optional volunteer relay. This build is {channel} —
-          not a sole control for high-risk work.{" "}
+          Defaults, DNS, and optional volunteer relay. This build is{" "}
+          <span className="font-semibold text-ink">{channelName}</span> — not
+          a sole control for high-risk work.{" "}
           <ProjectLink link="docs" className="text-onion hover:text-onion-hot">
             See the docs
           </ProjectLink>{" "}
@@ -450,7 +452,11 @@ export function SettingsPage({ app }: { app: TorApp }) {
       <div className="rounded-xl border border-line bg-panel p-4">
         <div className="text-sm font-semibold">About</div>
         <p className="mt-1 text-xs text-muted">
-          OnionGate{version ? ` ${version}` : ""} · {channel}
+          OnionGate{version ? ` ${version}` : ""} ·{" "}
+          <span className="font-semibold text-ink">{channelName}</span>
+          {channel !== "stable"
+            ? " — pre-1.0 test channel, not a stable release"
+            : ""}
         </p>
         <p className="mt-2 text-xs text-muted">Copyright (C) 2026 OpenHat Security</p>
         <p className="mt-1 text-xs text-muted">

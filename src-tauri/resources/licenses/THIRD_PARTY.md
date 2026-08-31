@@ -6,7 +6,7 @@ apply to those components; see upstream projects for full terms and source.
 ## Tor (Classic) and pluggable transports
 
 - Source / downloads: https://www.torproject.org/ / https://dist.torproject.org/
-- Expert bundle version used by `scripts/download-deps.sh`: 15.0.19
+- Expert bundle version used by `scripts/download-deps.sh`: 15.0.20
 - License: Tor is typically distributed under a BSD-style license; pluggable
   transports (lyrebird, conjure, etc.) have their own licenses in the expert
   bundle `docs/` folder (copied under `resources/runtime/docs/` when present).

@@ -509,6 +509,11 @@ pub(crate) fn is_system_executable(path: &str) -> bool {
         || p.contains("/windows/system32/")
         || p.contains("/windows/syswow64/")
         || p.contains("/windows/winsxs/")
+        // Packaged OS shells (Start Menu, Settings, …) live under SystemApps /
+        // WindowsApps, not System32 — still not safe kill targets.
+        || p.contains("/windows/systemapps/")
+        || p.contains("/program files/windowsapps/")
+        || p.contains("/windows/immersivecontrolpanel/")
 }
 
 pub(crate) fn pid_executable_path(pid: u32) -> Option<String> {
@@ -1454,6 +1459,15 @@ mDNS     7  adam 4u  IPv4 0x4 0t0 UDP *:5353
             "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"
         ));
         assert!(is_system_executable(r"C:\Windows\System32\svchost.exe"));
+        assert!(is_system_executable(
+            r"C:\Windows\SystemApps\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\StartMenuExperienceHost.exe"
+        ));
+        assert!(is_system_executable(
+            r"C:\Program Files\WindowsApps\Microsoft.WindowsCalculator_11.0.0.0_x64__8wekyb3d8bbwe\CalculatorApp.exe"
+        ));
+        assert!(!is_system_executable(
+            r"C:\Program Files\NVIDIA Corporation\NvContainer\nvcontainer.exe"
+        ));
         assert!(!is_system_executable(
             "/Applications/Slack.app/Contents/MacOS/Slack"
         ));

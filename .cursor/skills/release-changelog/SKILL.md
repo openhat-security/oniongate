@@ -6,8 +6,9 @@ disable-model-invocation: true
 
 # Prepare OnionGate release changelog
 
-The user must provide a semantic version such as `0.2.1`. Do not create a tag,
-commit, push, publish a release, or alter release credentials.
+The user must provide a semantic version such as `0.2.5-alpha.1` (preferred
+while alpha) or `0.2.1`. Do not create a tag, commit, push, publish a release,
+or alter release credentials. Do not retag already-published releases.
 
 ## Workflow
 

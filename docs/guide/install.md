@@ -2,7 +2,8 @@
 
 ## Current release status
 
-OnionGate is pre-1.0. Treat every published artifact as alpha software and do
+OnionGate is pre-1.0. Treat every published artifact as **alpha** software
+(`x.y.z-alpha.N` going forward) and do
 not rely on it for high-risk activity.
 
 Download only from the

@@ -17,6 +17,13 @@ import {
 } from "@/lib/reopen";
 import { cn } from "@/lib/utils";
 import { effectiveLocale, translate } from "@/lib/i18n";
+import { useAppVersion } from "@/hooks/useAppVersion";
+import {
+  channelLabel,
+  isStableChannel,
+  releaseChannel,
+} from "@/lib/release";
+import { ProjectLink } from "@/components/ProjectLink";
 
 type VpnStatus = {
   active: boolean;
@@ -87,6 +94,9 @@ export function HomePage({
   const [recovery, setRecovery] = useState<RecoveryStatus | null>(null);
   const [connectGate, setConnectGate] = useState<null | "ask" | "opsec">(null);
   const [opsecAck, setOpsecAck] = useState(false);
+  const version = useAppVersion();
+  const channel = releaseChannel(version);
+  const channelName = channelLabel(channel);
 
   const cancelConnectGate = () => {
     setConnectGate(null);
@@ -161,6 +171,25 @@ export function HomePage({
 
   return (
     <section className="flex flex-col gap-3">
+      {!isStableChannel(channel) ? (
+        <div className="rounded-xl border border-warn/40 bg-warn/10 px-4 py-3">
+          <div className="text-sm font-semibold">
+            {channelName} software
+            {version ? ` · OnionGate ${version}` : ""}
+          </div>
+          <div className="mt-0.5 text-xs text-muted">
+            Not production-ready. Treat every build as a test release and read the
+            threat model before relying on it.{" "}
+            <ProjectLink
+              link="docs"
+              className="text-onion hover:text-onion-hot"
+            >
+              See the docs
+            </ProjectLink>
+          </div>
+        </div>
+      ) : null}
+
       {detect?.os === "macos" &&
       harden.some((h) => h.id === "boot_network_lock" && !h.active) ? (
         <div className="flex items-start justify-between gap-3 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3">

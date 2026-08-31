@@ -1,7 +1,7 @@
 {
   "name": "oniongate",
   "private": true,
-  "version": "0.2.4",
+  "version": "0.2.5-alpha.1",
   "description": "OnionGate — isolated Tor app routing, Onion Host, and leak verification",
   "license": "GPL-3.0-only",
   "homepage": "https://openhat-security.github.io/oniongate/",

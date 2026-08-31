@@ -100,8 +100,9 @@ endpoints.
 
 ## Install
 
-OnionGate is pre-1.0. Every published build is alpha software and must not be
-relied on for high-risk activity.
+OnionGate is pre-1.0. Every published build is **alpha** software (`x.y.z-alpha.N`
+going forward) and must not be relied on for high-risk activity. Do not treat
+GitHub Latest or a plain `0.x` install as a stable product.
 
 Download only from the
 [GitHub Releases page](https://github.com/openhat-security/oniongate/releases),

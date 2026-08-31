@@ -1,9 +1,35 @@
 # Release process
 
-OnionGate has not published a stable release. The workflow intentionally creates
-a **draft** first so artifacts can be inspected before publication. Staging
-releases and hyphenated semantic versions are marked prerelease; a plain version
-from `main` can become the normal updater channel after review.
+OnionGate has not published a stable release. Every downloadable build is
+**alpha** until the [stable-release gate](#stable-release-gate) passes.
+
+## Version naming
+
+Use semantic versions with an explicit prerelease identifier while the product
+is alpha:
+
+| Kind | Example tag | GitHub | Updater (`/releases/latest/`) |
+| --- | --- | --- | --- |
+| Alpha (current policy) | `v0.2.5-alpha.1` | Prerelease, never Latest | Not followed |
+| Beta / RC | `v0.3.0-beta.1`, `v1.0.0-rc.1` | Prerelease, never Latest | Not followed |
+| Stable (gates only) | `v1.0.0` | Latest | In-app updater |
+
+Rules:
+
+- Prefer **forward-looking** tags such as `0.2.5-alpha.1` or `0.3.0-alpha.1`.
+  Do **not** retag or rewrite already-published `v0.2.0`…`v0.2.4` (or any older
+  plain `0.x`) — that breaks checksums, attestations, and installed updaters.
+- Release CI marks any hyphenated version (`*-alpha*`, `*-beta*`, `*-rc*`, or
+  other `*-` suffix) and every `staging`-origin tag as a GitHub **prerelease**.
+- Alpha testers install from the Releases page (or a pinned asset URL). In-app
+  **Check for updates** follows GitHub Latest only, so it stays on the last
+  published non-prerelease until a stable tag exists.
+- A plain `1.0.0+` from `main` may become Latest only after the stable gate
+  below. Do not describe any `0.x` or `-alpha` / `-beta` / `-rc` build as
+  production-ready.
+
+The workflow intentionally creates a **draft** first so artifacts can be
+inspected before publication.
 
 ## Cursor changelog gate
 
@@ -77,8 +103,8 @@ enrollment:
 
 | Tag | Apple signing | Authenticode | Result |
 | --- | --- | --- | --- |
-| `0.x` | optional | optional | Publishes; unsigned platforms get a warning banner in the release notes |
-| `1.0.0`+ | required | required | Release CI fails the tag if either is missing |
+| `0.x` (including `-alpha.N`) | optional | optional | Publishes; unsigned platforms get a warning banner in the release notes |
+| `1.0.0`+ stable (no prerelease suffix) | required | required | Release CI fails the tag if either is missing |
 | any `-suffix`, or a `staging` tag | optional | optional | Marked prerelease, never Latest |
 
 When a platform is unsigned, CI prepends an explicit warning to the release
