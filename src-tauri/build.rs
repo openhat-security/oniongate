@@ -8,14 +8,11 @@ fn main() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
     if target_os == "windows" && target_env == "msvc" {
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("windows-app-manifest.xml");
+        let manifest =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("windows-app-manifest.xml");
         println!("cargo:rerun-if-changed={}", manifest.display());
         println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
-        println!(
-            "cargo:rustc-link-arg=/MANIFESTINPUT:{}",
-            manifest.display()
-        );
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
         // Drop tauri-build's bins-only resource manifest so it is not
         // duplicated with the linker-embedded copy.
         let windows = tauri_build::WindowsAttributes::new_without_app_manifest();
