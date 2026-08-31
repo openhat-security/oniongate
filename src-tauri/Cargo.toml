@@ -21,7 +21,7 @@ path = "src/main.rs"
 # Must not be named `oniongate`: macOS (and Windows) filesystems are
 # case-insensitive, so that path is the same inode as the GUI `OnionGate`
 # binary and the CLI silently overwrites the app. Double-click then runs
-# `status` and exits. Linux packages still expose the clap name `oniongate`.
+# `status` and exits. The shipped CLI binary is always `oniongate-cli`.
 [[bin]]
 name = "oniongate-cli"
 path = "src/bin/oniongate_cli.rs"

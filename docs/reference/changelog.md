@@ -38,6 +38,9 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Windows CI `cargo test` no longer dies at load with `STATUS_ENTRYPOINT_NOT_FOUND`.
   The Common-Controls v6 manifest is linked into every MSVC artifact (including
   the lib test harness), not only `[[bin]]` targets.
+- Linux release verification looks for `/usr/bin/OnionGate` (the GUI
+  `mainBinaryName`) instead of the old `/usr/bin/oniongate` path that collided
+  with the CLI rename.
 
 ## [0.2.4] - 2026-08-30
 

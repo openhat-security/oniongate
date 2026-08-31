@@ -472,7 +472,8 @@ jobs:
           rm -rf "$RUNNER_TEMP/oniongate-deb"
           dpkg-deb -x "$deb" "$RUNNER_TEMP/oniongate-deb"
           test -x "$RUNNER_TEMP/oniongate-deb/usr/bin/oniongate-helper"
-          test -x "$RUNNER_TEMP/oniongate-deb/usr/bin/oniongate"
+          # mainBinaryName is OnionGate; CLI is oniongate-cli (not shipped as /usr/bin/oniongate).
+          test -x "$RUNNER_TEMP/oniongate-deb/usr/bin/OnionGate"
 
           appimage="$(
             printf '%s\n' src-tauri/target/"$TARGET"/release/bundle/appimage/*.AppImage |
@@ -484,7 +485,7 @@ jobs:
             rm -rf squashfs-root
             "$GITHUB_WORKSPACE/$appimage" --appimage-extract >/dev/null
             test -x squashfs-root/usr/bin/oniongate-helper
-            test -x squashfs-root/usr/bin/oniongate
+            test -x squashfs-root/usr/bin/OnionGate
           )
       - name: Verify Windows bundles and signatures
         if: runner.os == 'Windows'

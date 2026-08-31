@@ -18,6 +18,7 @@ command lines into commit subjects.
 
 Range: `v0.2.4..HEAD`.
 
+- `20b8e02 chore: sync generated changelog docs for 0.2.5-alpha.1`
 - `39f520a fix: rustfmt so Actions can ship 0.2.5-alpha.1`
 - `5725d71 docs: mark v0.2.0–v0.2.4 as superseded for alpha installs`
 - `a004cbc docs: refresh the 0.2.5-alpha.1 commit-subject audit trail`
