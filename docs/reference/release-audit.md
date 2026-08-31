@@ -18,4 +18,5 @@ command lines into commit subjects.
 
 Range: `v0.2.4..HEAD`.
 
+- `81bfb18 chore: prepare 0.2.5-alpha.1 release`
 - `b0fa3c7 fix(windows): embed Common-Controls v6 so cargo test can load`
