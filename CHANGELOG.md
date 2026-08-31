@@ -7,6 +7,12 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Docs and GitHub release notes mark plain `v0.2.0`…`v0.2.4` as superseded:
+  install only the current `*-alpha*` build. Older releases stay published as
+  prereleases (not Latest) so checksums and assets remain reachable.
+
 ## [0.2.5-alpha.1] - 2026-08-30
 
 ### Changed

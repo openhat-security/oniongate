@@ -104,9 +104,11 @@ OnionGate is pre-1.0. Every published build is **alpha** software (`x.y.z-alpha.
 going forward) and must not be relied on for high-risk activity. Do not treat
 GitHub Latest or a plain `0.x` install as a stable product.
 
-Download only from the
-[GitHub Releases page](https://github.com/openhat-security/oniongate/releases),
-and verify the checksum, SBOM, and provenance before running anything.
+**Install only the current alpha** from the
+[GitHub Releases page](https://github.com/openhat-security/oniongate/releases)
+(look for `*-alpha*` prereleases). Older plain `v0.2.0`…`v0.2.4` releases are
+superseded and should not be installed. Verify the checksum, SBOM, and
+provenance before running anything.
 
 Pre-1.0 macOS and Windows builds are **not** signed with an OS vendor
 certificate, so Gatekeeper and SmartScreen will warn on first launch. Release CI

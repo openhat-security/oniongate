@@ -6,8 +6,13 @@ OnionGate is pre-1.0. Treat every published artifact as **alpha** software
 (`x.y.z-alpha.N` going forward) and do
 not rely on it for high-risk activity.
 
-Download only from the
-[official releases page](https://github.com/openhat-security/oniongate/releases).
+**Install only the current alpha** (`*-alpha*` on the
+[official releases page](https://github.com/openhat-security/oniongate/releases)).
+Older plain `v0.2.0`…`v0.2.4` builds are **superseded** — they remain available
+for checksum history and forensics, but you should not install them. GitHub
+Latest is intentionally empty while the product is alpha-only; do not treat a
+plain `0.2.x` badge or download as the supported channel.
+
 A release bundles Tor, sing-box, lyrebird, obfs4proxy, and the required runtime
 resources.
 

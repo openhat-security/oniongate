@@ -97,17 +97,20 @@ check.
 Tags must point to commits on `main` or `staging`.
 
 - While the product is alpha, `main` tags use semver prereleases such as
-  `v0.2.5-alpha.1`. Release CI marks them GitHub prereleases (never Latest).
+  `v0.2.5-alpha.1` (stay on `0.y.z-alpha.N`; do not jump to `1.0.0-alpha`
+  until the signing gates are the active goal). Release CI marks them GitHub
+  prereleases (never Latest).
 - `staging` always produces a prerelease for manual testing.
 - A plain stable tag (for example `v1.0.0`) may become Latest only after the
   [stable-release gate](/reference/release#stable-release-gate).
 
 GitHub's `/releases/latest/` endpoint excludes drafts and prereleases. Therefore
-the built-in updater follows published non-prerelease releases only. Alpha and
-staging installers are downloaded from the Releases page (and verified against
-`SHA256SUMS`); they do not replace the Latest update channel until a stable
-release exists. Already-published plain `v0.2.x` tags are left as-is — do not
-retag them.
+the built-in updater follows published non-prerelease releases only. While every
+downloadable build is a prerelease, `/releases/latest/` (and thus
+`latest.json`) is empty on purpose — older plain `v0.2.x` releases are marked
+superseded/prerelease so they cannot become Latest again. Alpha and staging
+installers are downloaded from the Releases page (and verified against
+`SHA256SUMS`). Do not retag already-published plain `v0.2.x` tags.
 
 ## Trust-root warning
 

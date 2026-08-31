@@ -16,17 +16,51 @@ is alpha:
 
 Rules:
 
+- Prefer **`0.y.z-alpha.N`** until the [stable-release gate](#stable-release-gate)
+  passes. SemVer `0.x` means initial development; bump `y` for meaningful
+  incompatible work and `z` / `-alpha.N` for smaller cuts. Do **not** jump to
+  `1.0.0-alpha.N` while notarization and Authenticode are still optional —
+  that version line is reserved for stabilizing toward the signed `1.0.0`
+  milestone and confuses the project's 1.0 signing gates.
 - Prefer **forward-looking** tags such as `0.2.5-alpha.1` or `0.3.0-alpha.1`.
   Do **not** retag or rewrite already-published `v0.2.0`…`v0.2.4` (or any older
   plain `0.x`) — that breaks checksums, attestations, and installed updaters.
 - Release CI marks any hyphenated version (`*-alpha*`, `*-beta*`, `*-rc*`, or
   other `*-` suffix) and every `staging`-origin tag as a GitHub **prerelease**.
 - Alpha testers install from the Releases page (or a pinned asset URL). In-app
-  **Check for updates** follows GitHub Latest only, so it stays on the last
-  published non-prerelease until a stable tag exists.
+  **Check for updates** follows GitHub Latest only. While every published build
+  is a prerelease, Latest is empty on purpose — the updater must not treat a
+  plain `0.2.x` as stable.
 - A plain `1.0.0+` from `main` may become Latest only after the stable gate
   below. Do not describe any `0.x` or `-alpha` / `-beta` / `-rc` build as
   production-ready.
+
+## Deprecating older releases
+
+GitHub has no first-class “deprecated” flag on Releases. For OnionGate:
+
+1. Mark superseded builds as **prerelease** (so they cannot be Latest).
+2. Ensure only one release is Latest — and during alpha, **none** should be
+   (Latest stays empty until a stable tag).
+3. Prefix the release title with a clear superseded marker and prepend a
+   caution banner in the body that points installers at the current alpha on
+   the [Releases page](https://github.com/openhat-security/oniongate/releases).
+4. Keep README / install docs pointing only at the current alpha channel.
+5. Do **not** delete tags or assets that checksums, attestations, or installed
+   clients may still reference, unless there is an explicit migration plan.
+
+Example maintainer edit (published tags only; leave assets in place):
+
+```bash
+gh release edit v0.2.4 \
+  --prerelease \
+  --title "OnionGate v0.2.4 (superseded)" \
+  -F path/to/notes-with-superseded-banner.md
+```
+
+Do not pass `--latest=false` as a separate token on older `gh` builds — the
+literal `false` can be parsed as a second positional argument. Marking the
+release as a prerelease is enough to clear Latest.
 
 The workflow intentionally creates a **draft** first so artifacts can be
 inspected before publication.
