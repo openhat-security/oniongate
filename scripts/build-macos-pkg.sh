@@ -166,6 +166,9 @@ fi
 
 # The uninstaller ships inside the bundle so it is double-clickable from
 # Finder. The .app that Tauri builds does not carry it, so inject it here.
+# Ensure Resources exists: some CI targets have omitted it and `install`
+# then fails with set -e before pkgbuild.
+mkdir -p "$payload/OnionGate.app/Contents/Resources"
 install -m 0755 "$PKG_DIR/uninstall-oniongate.sh" \
     "$payload/OnionGate.app/Contents/Resources/uninstall.command"
 
@@ -173,7 +176,12 @@ install -m 0755 "$PKG_DIR/uninstall-oniongate.sh" \
 # to open it ("code has no resources but signature indicates they must be
 # present"). Ad-hoc sign the staged bundle so a local .pkg can `open`.
 # `TeamIdentifier=not set` is the linker stub, not a Developer ID.
-team="$(codesign -dv --verbose=4 "$payload/OnionGate.app" 2>&1 | awk -F= '/^TeamIdentifier=/{print $2}')"
+# codesign -dv can exit non-zero while still printing TeamIdentifier; do not
+# let pipefail abort the .pkg build on GitHub's Intel runners.
+team="$(
+    { codesign -dv --verbose=4 "$payload/OnionGate.app" 2>&1 || true; } |
+        awk -F= '/^TeamIdentifier=/{print $2; exit}'
+)"
 if [[ -z "$team" || "$team" == "not set" ]]; then
     echo "==> Ad-hoc codesigning the staged app (no Developer ID on this build)"
     codesign --force --deep --sign - "$payload/OnionGate.app"

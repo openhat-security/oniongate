@@ -41,6 +41,8 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Linux release verification looks for `/usr/bin/OnionGate` (the GUI
   `mainBinaryName`) instead of the old `/usr/bin/oniongate` path that collided
   with the CLI rename.
+- Unsigned macOS Intel `.pkg` builds no longer abort after skipping the
+  connection filter when `codesign -dv` exits non-zero under `pipefail`.
 
 ## [0.2.4] - 2026-08-30
 
