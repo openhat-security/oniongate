@@ -218,6 +218,11 @@ async fn status() -> i32 {
     println!("bridge_count={}", s.bridge_lines.len());
     println!("connection_mode={}", s.connection_mode);
     println!("kill_switch={}", s.kill_switch);
+    let lock = crate::firewall::network_lock_status();
+    println!("network_lock_active={}", lock.active);
+    if lock.active {
+        println!("network_lock_detail={}", lock.detail);
+    }
     println!("exit_country={}", s.exit_country);
     let recovery = crate::session::recovery_status();
     println!("session_phase={:?}", recovery.phase);
@@ -254,7 +259,30 @@ async fn start() -> i32 {
             std::mem::forget(managed_singbox);
             0
         }
-        Err(e) => fail(e),
+        Err(e) => {
+            let settings = settings::load();
+            let fail_closed = settings.kill_switch || settings.strict_tcp_lock;
+            let lock = crate::firewall::network_lock_status();
+            if lock.active && !fail_closed {
+                // The user did not ask to stay locked. Leaving the transition
+                // lock armed blocks clearnet UDP/QUIC, IPv6 and system DNS for
+                // the whole host, so release it and return to the pre-start
+                // state instead of silently breaking the machine's networking.
+                match crate::firewall::disarm_after_transition().await {
+                    Ok(_) => eprintln!(
+                        "note: start failed, so the transition network lock was released and host DNS/UDP are restored."
+                    ),
+                    Err(de) => eprintln!(
+                        "warning: start failed and the transition network lock could not be released ({de}); clearnet UDP/QUIC, IPv6 and system DNS stay blocked host-wide. Run `oniongate-cli stop`."
+                    ),
+                }
+            } else if lock.active {
+                eprintln!(
+                    "note: the transition network lock stays armed because a kill switch or NIC lock is enabled, so clearnet UDP/QUIC, IPv6 and system DNS remain blocked host-wide. Run `oniongate-cli stop` to restore the network."
+                );
+            }
+            fail(e)
+        }
     }
 }
 
