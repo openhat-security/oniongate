@@ -82,6 +82,49 @@ pub fn strategy_blocks_strict_lock(settings: &AppSettings) -> Option<&'static st
     None
 }
 
+/// Why Snowflake can't run under a UDP-blocking lock. Shared by Smart Connect
+/// (skip) and the explicit-start paths (refuse).
+pub const SNOWFLAKE_UDP_LOCK_REASON: &str = "Snowflake needs clearnet DNS and WebRTC/UDP, \
+and the network lock drops all clearnet UDP";
+/// Why meek can't run under a UDP-blocking lock.
+pub const MEEK_UDP_LOCK_REASON: &str =
+    "meek needs clearnet DNS for its front domain, and the network lock drops all clearnet UDP";
+
+/// Does this attempt need a transport that can't bootstrap while outbound
+/// UDP is dropped?
+///
+/// The transition lock (`firewall::arm_for_transition`) and the UDP kill
+/// switch drop every clearnet UDP packet, DNS included, on Linux, macOS and
+/// Windows. Tor itself only dials relay IPs over TCP, so direct Tor, vanilla
+/// and obfs4 bridges still work. Snowflake's client has to resolve its broker
+/// and front domains and then speak WebRTC over UDP; meek has to resolve its
+/// front domain. Both stall at ~10% with `write: operation not permitted`.
+///
+/// `udp_lock_active` is passed in rather than read here so callers decide
+/// whether the lock *is* live (Smart Connect) or *will be* armed (bring-up),
+/// and so this stays testable without nftables or pf.
+///
+/// Looks only at the bridge lines Tor will actually load
+/// ([`super::process::active_bridge_lines`]), so a `direct` attempt with
+/// leftover Snowflake settings is not blocked.
+pub fn strategy_blocks_udp_lock(
+    settings: &AppSettings,
+    udp_lock_active: bool,
+) -> Option<&'static str> {
+    if !udp_lock_active {
+        return None;
+    }
+    let lines = super::process::active_bridge_lines(settings);
+    let transports = super::pt::transports_from_bridge_lines(&lines);
+    if transports.contains(&super::pt::Transport::Snowflake) {
+        return Some(SNOWFLAKE_UDP_LOCK_REASON);
+    }
+    if transports.contains(&super::pt::Transport::Meek) {
+        return Some(MEEK_UDP_LOCK_REASON);
+    }
+    None
+}
+
 fn host_from_endpoint(endpoint: &str) -> Option<&str> {
     if let Some(rest) = endpoint.strip_prefix('[') {
         return rest.split_once(']').map(|(h, _)| h);
@@ -282,6 +325,176 @@ mod tests {
         let mut s = AppSettings::default();
         s.last_connect_strategy = "builtin:snowflake".into();
         assert!(strategy_blocks_strict_lock(&s).is_some());
+    }
+
+    const OBFS4: &str = "Bridge obfs4 198.51.100.30:443 0123456789ABCDEF0123456789ABCDEF01234567 cert=AAAA iat-mode=0";
+    const VANILLA: &str = "Bridge 198.51.100.20:443 0123456789ABCDEF0123456789ABCDEF01234567";
+
+    fn with_lines(strategy: &str, lines: Vec<String>) -> AppSettings {
+        let mut s = AppSettings::default();
+        s.bridges_enabled = true;
+        s.bridge_source = "custom".into();
+        s.last_connect_strategy = strategy.into();
+        s.bridge_lines = lines;
+        s
+    }
+
+    fn smart_snowflake() -> AppSettings {
+        let mut s = AppSettings::default();
+        s.bridges_enabled = true;
+        s.bridge_source = "builtin:snowflake".into();
+        s.last_connect_strategy = "builtin:snowflake".into();
+        s
+    }
+
+    #[test]
+    fn snowflake_is_refused_under_udp_lock() {
+        assert_eq!(
+            strategy_blocks_udp_lock(&smart_snowflake(), true),
+            Some(SNOWFLAKE_UDP_LOCK_REASON)
+        );
+    }
+
+    #[test]
+    fn snowflake_is_allowed_without_udp_lock() {
+        assert_eq!(strategy_blocks_udp_lock(&smart_snowflake(), false), None);
+    }
+
+    #[test]
+    fn saved_snowflake_bridge_lines_are_refused_under_udp_lock() {
+        let s = with_lines(
+            "bridges",
+            crate::tor::bridges::bundled_defaults("snowflake"),
+        );
+        assert_eq!(
+            strategy_blocks_udp_lock(&s, true),
+            Some(SNOWFLAKE_UDP_LOCK_REASON)
+        );
+        assert_eq!(strategy_blocks_udp_lock(&s, false), None);
+    }
+
+    #[test]
+    fn meek_is_refused_under_udp_lock() {
+        let s = with_lines("bridges", crate::tor::bridges::bundled_defaults("meek"));
+        assert_eq!(
+            strategy_blocks_udp_lock(&s, true),
+            Some(MEEK_UDP_LOCK_REASON)
+        );
+    }
+
+    #[test]
+    fn meek_is_allowed_without_udp_lock() {
+        let s = with_lines("bridges", crate::tor::bridges::bundled_defaults("meek"));
+        assert_eq!(strategy_blocks_udp_lock(&s, false), None);
+    }
+
+    #[test]
+    fn meek_token_spelled_meek_is_refused_too() {
+        let s = with_lines(
+            "bridges",
+            vec![
+                "Bridge meek 192.0.2.20:80 url=https://example.invalid/ front=www.example.com"
+                    .into(),
+            ],
+        );
+        assert_eq!(
+            strategy_blocks_udp_lock(&s, true),
+            Some(MEEK_UDP_LOCK_REASON)
+        );
+    }
+
+    #[test]
+    fn mixed_lines_with_one_snowflake_are_refused() {
+        // Tor launches every transport in the torrc, so one Snowflake line is
+        // enough to need UDP.
+        let mut lines = vec![OBFS4.to_string()];
+        lines.extend(crate::tor::bridges::bundled_defaults("snowflake"));
+        let s = with_lines("bridges", lines);
+        assert_eq!(
+            strategy_blocks_udp_lock(&s, true),
+            Some(SNOWFLAKE_UDP_LOCK_REASON)
+        );
+    }
+
+    #[test]
+    fn snowflake_wins_over_meek_when_both_are_loaded() {
+        let mut lines = crate::tor::bridges::bundled_defaults("meek");
+        lines.extend(crate::tor::bridges::bundled_defaults("snowflake"));
+        let s = with_lines("bridges", lines);
+        assert_eq!(
+            strategy_blocks_udp_lock(&s, true),
+            Some(SNOWFLAKE_UDP_LOCK_REASON)
+        );
+    }
+
+    #[test]
+    fn tcp_only_transports_are_allowed_under_udp_lock() {
+        for line in [OBFS4, VANILLA] {
+            let s = with_lines("bridges", vec![line.to_string()]);
+            assert_eq!(strategy_blocks_udp_lock(&s, true), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn direct_with_leftover_snowflake_source_is_allowed_under_udp_lock() {
+        // Censored Network preset leaves bridge_source=builtin:snowflake, but
+        // Smart Connect's direct try turns bridges off. That try must not be
+        // blocked by the leftover setting.
+        let mut s = smart_snowflake();
+        s.last_connect_strategy = "direct".into();
+        s.bridges_enabled = false;
+        assert_eq!(strategy_blocks_udp_lock(&s, true), None);
+    }
+
+    #[test]
+    fn disabled_bridges_with_snowflake_lines_are_allowed_under_udp_lock() {
+        let mut s = with_lines(
+            "bridges",
+            crate::tor::bridges::bundled_defaults("snowflake"),
+        );
+        s.bridges_enabled = false;
+        assert_eq!(strategy_blocks_udp_lock(&s, true), None);
+    }
+
+    #[test]
+    fn builtin_snowflake_strategy_overrides_saved_obfs4_lines() {
+        // process::write_managed_torrc swaps in bundled Snowflake for this
+        // strategy, so the check has to as well.
+        let s = with_lines("builtin:snowflake", vec![OBFS4.to_string()]);
+        assert_eq!(
+            strategy_blocks_udp_lock(&s, true),
+            Some(SNOWFLAKE_UDP_LOCK_REASON)
+        );
+    }
+
+    #[test]
+    fn default_settings_are_allowed_under_udp_lock() {
+        assert_eq!(
+            strategy_blocks_udp_lock(&AppSettings::default(), true),
+            None
+        );
+        assert_eq!(
+            strategy_blocks_udp_lock(&AppSettings::default(), false),
+            None
+        );
+    }
+
+    #[test]
+    fn strict_lock_refusal_is_unchanged_for_snowflake_and_meek() {
+        let mut meek = AppSettings::default();
+        meek.bridge_lines = crate::tor::bridges::bundled_defaults("meek");
+        assert!(strategy_blocks_strict_lock(&meek).is_some());
+        assert!(strategy_blocks_strict_lock(&smart_snowflake()).is_some());
+        assert!(strategy_blocks_strict_lock(&AppSettings::default()).is_none());
+    }
+
+    #[test]
+    fn udp_lock_reasons_name_the_cause() {
+        for reason in [SNOWFLAKE_UDP_LOCK_REASON, MEEK_UDP_LOCK_REASON] {
+            assert!(reason.contains("DNS"), "{reason}");
+            assert!(reason.contains("network lock"), "{reason}");
+        }
+        assert!(SNOWFLAKE_UDP_LOCK_REASON.contains("UDP"));
     }
 
     #[test]

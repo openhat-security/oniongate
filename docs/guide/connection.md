@@ -56,6 +56,13 @@ locally. It does not upload that network key.
 Turning Smart Connect off starts Tor with the currently saved bridge and routing
 configuration without trying alternatives.
 
+The connect-time network lock and the kill switch drop all clearnet UDP,
+including DNS. Snowflake needs DNS and WebRTC/UDP, and meek needs DNS for its
+front domain, so neither can bootstrap under the lock. Smart Connect skips them
+and records the reason. With Smart Connect off, a Snowflake or meek start is
+refused with an error instead of timing out. obfs4 and vanilla bridges dial
+plain IPs over TCP and still work.
+
 ::: warning Snowflake is a fallback, not a faster Tor mode
 Use bridges when direct Tor is blocked or conspicuous on your network. A bridge
 operator or transport infrastructure can observe that your device connected to

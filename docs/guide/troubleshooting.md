@@ -70,7 +70,9 @@ lsof -nP -iTCP:9050 -iTCP:9051
 ### Bootstrap times out
 
 The network may block direct Tor. Use [Bridges](/guide/bridges), or leave Smart
-Connect on so it can try saved BridgeDB lines and bundled Snowflake.
+Connect on so it can try saved BridgeDB lines and bundled Snowflake. Snowflake
+and meek are skipped while the network lock is on, because the lock blocks the
+UDP and DNS they need. Use obfs4 or vanilla bridges in that case.
 
 Repeatedly changing transports is not a substitute for reading the Tor log. A
 missing transport binary appears as **missing** under Active transports.
