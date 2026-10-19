@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 #[cfg(target_os = "macos")]
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::process::Command as StdCommand;
 use std::sync::{LazyLock, Mutex};
@@ -1220,20 +1220,23 @@ fn reopen_path_policy(path: &str) -> Result<(), String> {
     if carries_arguments(path) {
         return Err("its path looks like a command line rather than a bundle".into());
     }
-    let candidate = Path::new(path);
-    if !candidate.is_absolute() {
+    // macOS application bundles are POSIX paths. Evaluate them with POSIX
+    // semantics on every platform: std::path::Path reads "/Applications/..." as
+    // neither absolute nor `.app`-extended on Windows, which failed these checks
+    // (and the CI runner there) even though the paths only ever come from macOS.
+    if !path.starts_with('/') {
         return Err("its path is not absolute".into());
     }
-    if candidate
-        .components()
-        .any(|part| matches!(part, Component::ParentDir))
-    {
+    if path.split('/').any(|part| part == "..") {
         return Err("its path walks up out of its own directory".into());
     }
-    if candidate.extension().and_then(|ext| ext.to_str()) != Some("app") {
+    if !path.ends_with(".app") {
         return Err("it is not an application bundle".into());
     }
-    if !REOPEN_ROOTS.iter().any(|root| candidate.starts_with(root)) {
+    let under_root = REOPEN_ROOTS
+        .iter()
+        .any(|root| path == *root || path.starts_with(&format!("{root}/")));
+    if !under_root {
         return Err("it does not live in /Applications or /System/Applications".into());
     }
     Ok(())
@@ -1937,6 +1940,23 @@ mod tests {
 
         let err = reopen_path_policy("/Applications/Slack\n.app").expect_err("control char");
         assert!(err.contains("plain filesystem path"));
+    }
+
+    /// Regression for the windows-2022 CI failure. macOS POSIX bundle paths
+    /// must be accepted on every host OS: `std::path::Path` treated
+    /// "/Applications/..." as non-absolute on Windows, which failed these
+    /// checks there. The policy is now pure POSIX string logic.
+    #[test]
+    fn reopen_path_policy_is_posix_on_every_os() {
+        assert!(reopen_path_policy("/Applications/Slack.app").is_ok());
+        assert!(reopen_path_policy("/System/Applications/Mail.app").is_ok());
+        assert!(reopen_entry("Slack", "/Applications/Slack.app/Contents/MacOS/Slack").is_some());
+        // A Windows-style path is not a macOS bundle path and stays refused,
+        // also identically on every OS.
+        assert!(reopen_path_policy("C:\\Program Files\\Slack.app").is_err());
+        assert!(reopen_path_policy("\\\\server\\share\\Slack.app").is_err());
+        // The under-root prefix check is not fooled by a sibling directory.
+        assert!(reopen_path_policy("/ApplicationsEvil/Slack.app").is_err());
     }
 
     #[cfg(unix)]
