@@ -5,7 +5,7 @@
 <h1 align="center">OnionGate</h1>
 
 <p align="center">
-  <b>A Tor workstation toolkit for macOS, Linux, and Windows.</b>
+  A Tor workstation toolkit for macOS, Linux, and Windows.
 </p>
 
 <p align="center">
@@ -17,193 +17,278 @@
   </a>
 </p>
 
-OnionGate is a desktop app that routes individual applications through isolated
-Tor circuits, turns a local port into an onion site, and inspects the live
-routing and leak-prevention boundary. It bundles and manages Tor for you — no
-terminal required — and ships a headless CLI for servers and scripts.
+OnionGate is a desktop app that runs Tor for you and sends your traffic through
+it. It can route single apps over their own Tor circuits, publish a local port
+as a v3 onion site, and show you which processes on the machine are still
+talking to the internet directly. It bundles Tor, so you don't need a terminal
+or Homebrew, and it comes with `oniongate-cli` for servers and scripts.
 
-**[Read the documentation →](https://openhat-security.github.io/oniongate/)**
+Full documentation: <https://openhat-security.github.io/oniongate/>
 
-> This project is **alpha**. It is **not** a VPN, Tor Browser, Tails, or a
-> two-machine Tor gateway, and it must not be the sole control for high-risk
-> work. It does not stop browser fingerprinting or global traffic correlation.
-> Read the [threat model](docs/reference/threat-model.md) and
-> [residual leaks](docs/reference/residual-leaks.md) first.
+> [!WARNING]
+> OnionGate is alpha software. It is not a VPN, Tor Browser, Tails, or a
+> two-machine Tor gateway, and it should not be your only protection for
+> high-risk work. It does nothing about browser fingerprinting or global traffic
+> correlation. Read the [threat model](docs/reference/threat-model.md) and the
+> list of [residual leaks](docs/reference/residual-leaks.md) before you rely on
+> it.
 
-## Potential leaks
+## What it does
 
-Same-host routing cannot match a workstation that has no clearnet NIC. Even with
-the macOS NIC default-deny on, these remain:
+- Routes apps through Tor. Each selected app gets its own isolated circuit. On
+  macOS and Linux, Session Guard suspends a selected app if its Tor or TUN route
+  drops.
+- Hosts onion sites. OnionGate publishes `127.0.0.1:<port>` as a v3 onion
+  service and refuses servers bound to `0.0.0.0`. A temporary site throws its
+  key away at creation, so the address is gone for good once Tor stops. A
+  permanent site keeps its address across restarts and can require named
+  client credentials, which you can revoke one at a time. See the
+  [hosting guide](docs/guide/hosting.md).
+- Shows the live boundary. A background watch lists processes with clearnet TCP
+  connections that bypass OnionGate. The list lives in memory and is never
+  saved. On-demand checks cover egress, DNS, IPv6, UDP/QUIC and per-app policy,
+  and you can export a redacted report. Public IPs are compared in memory and
+  never stored. None of this is packet capture or a formal proof.
+- Lives in the tray. From the macOS, Linux or Windows tray icon you can see
+  status, connect or disconnect, get a new identity, or run Emergency Restore.
 
-- kernel / NECP paths that never hit `pf`
-- any local process TCP’ing to a listed Tor endpoint IP
-- DHCP, optional LAN, and user destination exceptions
-- Linux/Windows (this lock is macOS-only)
-- Snowflake/meek (lock refused)
+## Pick a routing mode
 
-Full list: [Residual leaks](docs/reference/residual-leaks.md).
-
-## Routing modes: SOCKS vs TUN vs two-machine isolation
-
-OnionGate can feel like a small “Tor VPN” app, but the protection boundary
-depends on which mode you use. A two-machine gateway keeps the workstation off
-the clearnet NIC. OnionGate is a same-host app that manages Tor and optionally a
-TUN.
+How much OnionGate can protect you depends on the mode. It runs on the same
+machine as your apps, so it can't match a gateway setup where the workstation
+has no clearnet network card at all.
 
 | | System SOCKS (proxy mode) | TUN mode | Two-machine gateway |
 | --- | --- | --- | --- |
 | Who must opt in | Each app that honors SOCKS | Most TCP on the machine | Everything in the workstation |
-| Ordinary browsers (Chrome, Firefox, Safari, …) | Only if configured for SOCKS + remote DNS | Yes — captured by the tunnel | Yes — no clearnet path |
-| Tor Browser | Ignores OS proxy; runs its own Tor | Stock TB stacks Tor-over-Tor unless redirected | Gateway Tor + no stacked Tor |
-| DNS | App must use `socks5h` / remote DNS | Tor `DNSPort` when Resolve through Tor is on | Forced through the gateway |
-| UDP / QUIC | Can leak | Blocked | Blocked / unavailable |
-| Fail closed if Tor dies | Weak (apps may go direct) | Stronger (`strict_route` + Session Guard + optional NIC lock) | Strong (workstation has no clearnet) |
-| Isolation | Process / OS trust boundary | Process / OS trust boundary | Separate machines + filtered control port |
+| Ordinary browsers (Chrome, Firefox, Safari) | Only if set to SOCKS with remote DNS | Yes, captured by the tunnel | Yes, there is no clearnet path |
+| Tor Browser | Ignores the OS proxy and runs its own Tor | Stock Tor Browser stacks Tor over Tor unless redirected | Gateway Tor, no stacked Tor |
+| DNS | App must use `socks5h` or remote DNS | Tor `DNSPort` when Resolve through Tor is on | Forced through the gateway |
+| UDP / QUIC | Can leak | Blocked | Blocked or unavailable |
+| If Tor dies | Weak; apps may go direct | Stronger: `strict_route`, Session Guard, optional NIC lock | Strong; the workstation has no clearnet |
+| Isolation | Process / OS trust boundary | Process / OS trust boundary | Separate machines and a filtered control port |
 
-**You do not need “Tor Browser via OnionGate” for arbitrary browsers.**  
-Connect in **TUN** mode (all traffic via Tor, or your split-tunnel policy). Chrome,
-Firefox, Safari, and most apps then reach the network through OnionGate’s Tor.
+Proxy mode is the easy option, and any app can ignore it. If you want ordinary
+browsers and most apps to go through Tor on one machine, connect in TUN mode
+(all traffic, or your split-tunnel policy).
 
-**When you do need the Tor Browser launcher:** only if you want **Tor Browser**
-itself. Tor Browser always expects its own Tor on `127.0.0.1:9150`. OnionGate
-already binds those Tor Browser ports on its managed Tor; the
-**Apps → Tor Browser via OnionGate** launcher sets `TOR_SKIP_LAUNCH` and points
-SOCKS/control at OnionGate so about:tor treats Tor as externally managed.
-Open that launcher, not the stock Tor Browser icon, while OnionGate is
-Connected. Details: [Route applications](docs/guide/apps.md) and
+You only need the Tor Browser launcher if you want Tor Browser itself. Tor
+Browser expects its own Tor on `127.0.0.1:9150`, and OnionGate's managed Tor
+already listens there. Use **Apps → Tor Browser via OnionGate** while
+OnionGate is connected, not the stock Tor Browser icon. The launcher sets
+`TOR_SKIP_LAUNCH` and points Tor Browser's SOCKS and control ports at
+OnionGate. Details are in [Route applications](docs/guide/apps.md) and
 [Connect](docs/guide/connection.md).
 
-**SOCKS proxy alone** is a convenience path: easy, but any app can ignore it.
-Prefer TUN when you want “any browser / most apps” containment on one machine.
-On macOS, Maximum Isolation adds a kernel `pf` default-deny so leftover public
-IP (including Apple daemons) cannot leave the NIC except to Tor’s allowlisted
-endpoints.
+On macOS, Maximum Isolation adds a `pf` default-deny rule, so leftover public
+IP traffic (Apple daemons included) can only reach Tor's allowlisted endpoints.
 
-## What you can do
+### What can still leak
 
-- **Route apps through Tor** — give each app its own isolated circuit, with a
-  macOS/Linux Session Guard that suspends matching selected processes if their
-  Tor/TUN route drops.
-- **Host an onion site** — expose `127.0.0.1:<port>` as a v3 onion service with
-  client authorization and a QR handoff. Make it **temporary** (key discarded at
-  stop, address gone for good) or **permanent** (same address across restarts,
-  with named client credentials you can revoke individually). See the
-  [hosting guide](docs/guide/hosting.md).
-- **Inspect the live boundary** — a background watch lists processes with
-  clearnet TCP that is not going through OnionGate (ephemeral, not stored).
-  Run on-demand diagnostics for egress separation, DNS, IPv6, UDP/QUIC, and
-  per-app policy, then export a redacted report. Public IPs are compared in
-  memory, never stored. Verification is not packet capture or formal proof.
-- **Stay in control from the tray** — inspect live status, connect/disconnect,
-  rotate identity, or run Emergency Restore from the native macOS, Linux, or
-  Windows widget.
+Even with the macOS NIC default-deny on, these paths remain:
 
-## Install
+- kernel and NECP paths that never reach `pf`;
+- any local process that opens TCP to a listed Tor endpoint IP;
+- DHCP, optional LAN access, and destination exceptions you add;
+- everything on Linux and Windows, where that lock doesn't exist yet;
+- Snowflake and meek, which the lock refuses.
 
-OnionGate is pre-1.0. Every published build is **alpha** software (`x.y.z-alpha.N`
-going forward) and must not be relied on for high-risk activity. Do not treat
-GitHub Latest or a plain `0.x` install as a stable product.
+The full list is in [Residual leaks](docs/reference/residual-leaks.md).
 
-**Install only the current alpha** from the
-[GitHub Releases page](https://github.com/openhat-security/oniongate/releases)
-(look for `*-alpha*` prereleases). Older plain `v0.2.0`…`v0.2.4` releases are
-superseded and should not be installed. Verify the checksum, SBOM, and
-provenance before running anything.
+## Install a release
 
-Pre-1.0 macOS and Windows builds are **not** signed with an OS vendor
-certificate, so Gatekeeper and SmartScreen will warn on first launch. Release CI
-blocks any `1.0.0` or later stable release that is not fully signed.
+Every published build is alpha (`x.y.z-alpha.N`). Install the newest `*-alpha*`
+prerelease from the
+[releases page](https://github.com/openhat-security/oniongate/releases). The
+older plain `v0.2.0` to `v0.2.4` releases are superseded; don't install them.
 
-Full instructions, including building from source, are in the
-[install guide](docs/guide/install.md).
+| Platform | File |
+| --- | --- |
+| macOS Apple Silicon | `OnionGate_<version>_aarch64.pkg` |
+| macOS Intel | `OnionGate_<version>_x64.pkg` |
+| Windows x86_64 | NSIS `-setup.exe` |
+| Linux x86_64 | `.AppImage`, `.deb` or `.rpm` |
+
+Check the download before you run it:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing        # Linux
+shasum -a 256 -c SHA256SUMS --ignore-missing    # macOS
+```
+
+`SHA256SUMS.sig` is a minisign signature over that file. The public key is the
+updater `pubkey` in `src-tauri/tauri.conf.json`.
+
+Pre-1.0 macOS and Windows builds aren't signed by Apple or Microsoft, so
+Gatekeeper and SmartScreen warn on first launch. On macOS, right-click the
+`.pkg`, choose Open, and confirm. Release CI refuses to publish 1.0.0 or later
+unless every platform is signed. The [install guide](docs/guide/install.md)
+covers signatures, provenance, the macOS `.pkg` and uninstalling.
+
+## Build and run from source
+
+You need:
+
+- Node.js 24.18 or newer, but below 25 (see `.nvmrc`). Debian and Ubuntu
+  packages are too old; use nvm or the nodejs.org tarball.
+- Rust stable from rustup. Distro Rust (for example 1.85 on Debian 13) is too
+  old, so check that `~/.cargo/bin` comes first on your `PATH`.
+- Make, plus the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+  for your OS. On Debian or Ubuntu, `bash scripts/install-linux-build-deps.sh`
+  installs them, including `libevent-2.1-7`, which the bundled Linux Tor needs
+  to start.
+
+Then:
+
+```bash
+make setup     # npm ci, then download and SHA-256-check Tor, lyrebird and sing-box
+make start     # build the helper and CLI, start the helper, then run tauri dev
+```
+
+`make help` lists every target. `make start` asks for administrator rights once
+to install the privileged helper. [Daemons](docs/guide/daemons.md) explains
+what runs as root and what doesn't.
+
+If `make setup` stops with `curl: (22) ... 404` while downloading the Tor
+expert bundle, the Tor Project has moved that version off `dist.torproject.org`.
+Fetch the same file from the archive into the cache and run setup again. The
+pinned SHA-256 still checks it:
+
+```bash
+v=15.0.20   # TOR_BROWSER_VERSION in scripts/download-deps.sh
+f=tor-expert-bundle-linux-x86_64-$v.tar.gz   # use your platform's name
+mkdir -p .deps-cache
+curl -fL -o .deps-cache/$f \
+  https://archive.torproject.org/tor-package-archive/torbrowser/$v/$f
+make setup
+```
+
+To build installers for the OS you're on (unsigned, for local testing):
+
+```bash
+make build        # Tauri bundle
+make downloads    # installer files, including the macOS .pkg
+```
+
+Before opening a PR, run:
+
+```bash
+make check    # TypeScript typecheck, Rust tests, changelog trail
+make lint     # clippy and rustfmt
+```
+
+`make docs` serves the documentation site at <http://localhost:5173>.
 
 ## Command line
 
-`oniongate-cli` is the headless companion. It hosts onion sites on machines with no
-GUI:
+`oniongate-cli` uses the same Rust core as the app. Build it with:
 
 ```bash
-oniongate-cli start
+cargo build --release --manifest-path src-tauri/Cargo.toml --bin oniongate-cli
+```
+
+A short session that publishes a private site for a server on port 3000:
+
+```bash
+oniongate-cli start                          # Tor, then the saved proxy/TUN settings
 oniongate-cli host add blog --local-port 3000
-oniongate-cli host auth add blog alice
+oniongate-cli host ls                        # id, name, address, port mapping, auth
+oniongate-cli host auth add blog alice > alice.auth_private
+oniongate-cli status                         # read socks_up, control_up, dns_up
+oniongate-cli stop                           # stop Tor and restore network settings
 ```
 
-See the [CLI guide](docs/guide/cli.md).
+Give `alice.auth_private` to the client. It goes in their Tor's
+`ClientOnionAuthDir`, and the credential can't be shown again. Use
+`--public` on `host add` for a site anyone can open, or `host temp` for a
+temporary one. Exit codes are `0` for success, `1` for a runtime failure, and
+`2` for a usage error.
 
-## Develop
+On Linux, keep in mind:
 
-Requires Node.js (see `.nvmrc`), Rust stable, Make, and the Tauri prerequisites
-for your OS. Prefer the Makefile targets (`make help` lists them all).
+- On a machine with no desktop session, `start` connects Tor but then exits
+  with code 1, because it can't set the GNOME system proxy. Check `socks_up=true`
+  in `status` instead of relying on the exit code.
+- While a session is active, and also after a failed `start`, OnionGate keeps
+  an nftables lock that blocks all UDP and IPv6 on the host, system DNS
+  included. Run `oniongate-cli stop` to remove it. `sudo nft list tables`
+  shows `inet oniongate_lock` while it's on.
+- `host audit` can't confirm `published=true` for a site that requires client
+  auth, because OnionGate doesn't keep credentials. Test those sites from a
+  client that holds one.
 
-```bash
-make setup          # npm ci + download/verify Tor / sing-box sidecars
-make start          # start daemons, then tauri dev
-```
+All commands are in the [CLI guide](docs/guide/cli.md).
 
-Daemons (privileged helper install, status, and what is *not* a daemon) are
-documented in [docs/guide/daemons.md](docs/guide/daemons.md).
+## Where things are stored
 
-Build a release bundle from source:
+On Linux, OnionGate keeps its state in `~/.local/share/oniongate/`:
+`settings.json`, the generated `torrc`, `tor.log`, the Tor data directory, and
+`onion-sites/` with each permanent site's keys. The directories are `0700` and
+key files `0600`. Permanent onion keys aren't backed up anywhere. If you delete
+`onion-sites/<id>/`, that address is gone for good.
+[Local data and network activity](docs/reference/data-and-network.md) lists
+every file and every outbound request, macOS and Windows paths included.
 
-```bash
-make build
-```
+## Troubleshooting
 
-Quality checks before a PR:
+- `status` shows `recovery_needed=true`, or the app says "Interrupted session
+  detected": a previous owner exited and left state behind. Run
+  `oniongate-cli stop` (or Emergency Restore in the app), then check `status`.
+  `make cleanup` does the same thing during development. A session started
+  from the CLI also shows this flag, because the CLI process exits after
+  `start`.
+- "Another tor may still own port 9050": something else is listening on 9050.
+  Stop it (for example `sudo systemctl stop tor` or `brew services stop tor`).
+  `ss -ltnp | grep 9050` shows the owner on Linux.
+- Tor stalls during "Loading relay descriptors" the first time: the first
+  connection downloads the full directory and can be slow. Run `start` again;
+  later starts reuse the cache.
+- `tor: error while loading shared libraries: libevent-2.1.so.7`: install
+  `libevent-2.1-7` (Debian/Ubuntu) or `libevent` (Fedora).
 
-```bash
-make check
-make lint
-```
+[Recovery and troubleshooting](docs/guide/troubleshooting.md) has more.
 
-Work on the documentation site:
+## Security
 
-```bash
-make docs           # hot-reloading preview at http://localhost:5173
-```
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md),
+never in a public issue.
 
-## Contributing
+Things to know before you rely on OnionGate:
 
-Contributions are welcome under GPL-3.0. Please read
-[CONTRIBUTING.md](CONTRIBUTING.md) and our
-[Code of Conduct](CODE_OF_CONDUCT.md) first. Report security issues privately per
-[SECURITY.md](SECURITY.md) — never in a public issue.
+- Tor's SOCKS, control and DNS ports listen on `127.0.0.1` only (9050, 9060,
+  9150, 9051, 9151, 9053). The control ports use cookie authentication, but any
+  process running as your user can read the cookie.
+- Some features use the normal network on purpose: the update check (GitHub),
+  relay search (Onionoo), bridge scanning, and the first IP and location check
+  (api.ipify.org and ipwho.is). The data-and-network page lists all of them.
+- `oniongate-cli bridges` and `oniongate-cli settings` print bridge lines and
+  app paths. Don't paste their output into public issues.
 
 ## Documentation
 
-The full site is at
-**[openhat-security.github.io/oniongate](https://openhat-security.github.io/oniongate/)**.
+- [Getting started](docs/guide/index.md) and [Quick start](docs/guide/quick-start.md)
+- [Install](docs/guide/install.md) and [Local installers and updates](docs/guide/updates.md)
+- [Connect and route traffic](docs/guide/connection.md), [Use bridges](docs/guide/bridges.md), [Route applications](docs/guide/apps.md)
+- [Host an onion site](docs/guide/hosting.md) and [Verify the live boundary](docs/guide/verify.md)
+- [Check and harden this machine](docs/guide/system.md), [Settings and logs](docs/guide/settings.md)
+- [Recovery and troubleshooting](docs/guide/troubleshooting.md), [Command line](docs/guide/cli.md)
+- [Architecture](docs/reference/architecture.md), [Platform support](docs/reference/platform-support.md)
+- [Local data and network activity](docs/reference/data-and-network.md), [Threat model](docs/reference/threat-model.md), [Privacy](docs/reference/privacy.md)
+- [Third-party software](docs/reference/third-party.md), [Release process](docs/reference/release.md), [Changelog](CHANGELOG.md)
 
-- [Getting started](docs/guide/index.md)
-- [Quick start](docs/guide/quick-start.md)
-- [Local installers and updates](docs/guide/updates.md)
-- [Connect and route traffic](docs/guide/connection.md)
-- [Use bridges](docs/guide/bridges.md)
-- [Route applications](docs/guide/apps.md)
-- [Host an onion site](docs/guide/hosting.md)
-- [Verify the live boundary](docs/guide/verify.md)
-- [Check and harden this machine](docs/guide/system.md)
-- [Settings and logs](docs/guide/settings.md)
-- [Recovery and troubleshooting](docs/guide/troubleshooting.md)
-- [Command line](docs/guide/cli.md)
-- [Architecture](docs/reference/architecture.md)
-- [Platform support](docs/reference/platform-support.md)
-- [Local data and network activity](docs/reference/data-and-network.md)
-- [Threat model](docs/reference/threat-model.md)
-- [Privacy](docs/reference/privacy.md)
-- [Third-party software](docs/reference/third-party.md)
-- [Release process](docs/reference/release.md)
-- [Changelog](CHANGELOG.md)
-- [Security policy](SECURITY.md)
+## Contributing
 
-## License & trademark
+Contributions are welcome under GPL-3.0. Read [CONTRIBUTING.md](CONTRIBUTING.md)
+and the [Code of Conduct](CODE_OF_CONDUCT.md) first.
+
+## License and trademark
 
 Copyright (C) 2026 OpenHat Security.
 
 OnionGate is licensed under [GPL-3.0](LICENSE). It comes with ABSOLUTELY NO
 WARRANTY, to the extent permitted by applicable law; you are welcome to
 redistribute it under the terms of the GNU General Public License, version 3.
-Bundled component notices and corresponding-source links are in
+Notices and corresponding-source links for bundled components are in
 [`THIRD_PARTY.md`](src-tauri/resources/licenses/THIRD_PARTY.md).
 
 Parts of the macOS hardening features are derived from term7's *MacOS Privacy
@@ -214,6 +299,6 @@ mirror: <https://github.com/term7/MacOS-Privacy-and-Security-Enhancements>).
 Derived files carry their own modification notices; see
 [third-party software](docs/reference/third-party.md).
 
-OnionGate is an independent project — not affiliated with or endorsed by The Tor
-Project. "Tor" and the onion logo are trademarks of The Tor Project; OnionGate
-uses its own logo, not the official Tor onion logo.
+OnionGate is an independent project and is not affiliated with or endorsed by
+The Tor Project. "Tor" and the onion logo are trademarks of The Tor Project.
+OnionGate uses its own logo, not the official Tor onion logo.

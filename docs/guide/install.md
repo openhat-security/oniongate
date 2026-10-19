@@ -270,10 +270,10 @@ a build from source.
 
 ## The command line
 
-The CLI is built alongside the app as the `oniongate` binary:
+The CLI is built alongside the app as the `oniongate-cli` binary:
 
 ```bash
-cargo build --release --manifest-path src-tauri/Cargo.toml --bin oniongate
+cargo build --release --manifest-path src-tauri/Cargo.toml --bin oniongate-cli
 ```
 
 See the [CLI guide](/guide/cli) for what it can do.
