@@ -17,7 +17,7 @@ pub async fn bring_up(
     managed_singbox: &AsyncMutex<Option<Child>>,
     saved_proxy: &Mutex<SavedProxyState>,
 ) -> Result<String, String> {
-    let settings = settings::load();
+    let settings = settings::load_strict()?;
     if settings.strict_tcp_lock {
         if let Some(reason) = tor::endpoints::strategy_blocks_strict_lock(&settings) {
             return Err(reason.into());
