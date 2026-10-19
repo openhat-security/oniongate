@@ -83,6 +83,28 @@ download() {
   mv "$dest.partial" "$dest"
 }
 
+download_any() {
+  # Fetch into $dest from the first mirror that works. Mirrors are tried in
+  # order; the SHA-256 pin in verify_archive makes any of them safe.
+  local dest="$1"; shift
+  if [[ -f "$dest" ]]; then
+    echo "    cached $(basename "$dest")"
+    return
+  fi
+  local url
+  for url in "$@"; do
+    echo "    downloading $url"
+    if curl -fsSL --retry 3 -o "$dest.partial" "$url"; then
+      mv "$dest.partial" "$dest"
+      return
+    fi
+    echo "    mirror unavailable, trying next"
+    rm -f "$dest.partial"
+  done
+  echo "ERROR: all mirrors failed for $(basename "$dest")"
+  exit 1
+}
+
 verify_archive() {
   local archive="$1" name expected actual
   name="$(basename "$archive")"
@@ -129,10 +151,16 @@ mkdir -p "$RUNTIME_DIR"
 
 if [[ -n "${TOR_ARCH}" ]]; then
   TOR_TGZ="tor-expert-bundle-${TOR_OS}-${TOR_ARCH}-${TOR_BROWSER_VERSION}.tar.gz"
-  TOR_URL="https://dist.torproject.org/torbrowser/${TOR_BROWSER_VERSION}/${TOR_TGZ}"
   TOR_CACHE="$CACHE_DIR/$TOR_TGZ"
+  # dist.torproject.org only serves the current release, so a pinned older
+  # version 404s there and breaks a clean checkout (and release/CI builds that
+  # pin it). archive.torproject.org keeps every past release; fall back to it.
+  TOR_MIRRORS=(
+    "https://dist.torproject.org/torbrowser/${TOR_BROWSER_VERSION}/${TOR_TGZ}"
+    "https://archive.torproject.org/tor-package-archive/torbrowser/${TOR_BROWSER_VERSION}/${TOR_TGZ}"
+  )
   echo "==> Tor expert bundle ${TOR_BROWSER_VERSION} (${TOR_OS}-${TOR_ARCH})"
-  download "$TOR_URL" "$TOR_CACHE"
+  download_any "$TOR_CACHE" "${TOR_MIRRORS[@]}"
   verify_archive "$TOR_CACHE"
   tar -xzf "$TOR_CACHE" -C "$RUNTIME_DIR"
   # Expected layout: runtime/tor/tor, runtime/tor/pluggable_transports/*, runtime/data/geoip*
