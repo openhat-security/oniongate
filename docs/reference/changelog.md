@@ -14,6 +14,14 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Smart Connect no longer tries Snowflake or meek while the network lock is on.
+  The lock drops all clearnet UDP, DNS included, so both transports stalled at
+  10% and burned the 75-second timeout. Smart Connect now skips them and says
+  why. With Smart Connect off, starting or applying a Snowflake or meek config
+  under the lock is refused up front instead of timing out.
+
 ### Changed
 
 - Docs and GitHub release notes mark plain `v0.2.0`…`v0.2.4` as superseded:

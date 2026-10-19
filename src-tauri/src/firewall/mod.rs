@@ -79,6 +79,14 @@ pub fn network_lock_status() -> NetworkLockStatus {
     }
 }
 
+/// True when a lock that drops clearnet UDP (DNS included) is live: the
+/// transition network lock or the steady-state kill switch. Both block UDP on
+/// every platform, so UDP-dependent transports (Snowflake, meek) can't
+/// bootstrap. See [`crate::tor::endpoints::strategy_blocks_udp_lock`].
+pub fn udp_lock_active() -> bool {
+    network_lock_status().active || status().active
+}
+
 /// Steady-state kill switch: UDP/QUIC + IPv6, or the macOS default-deny NIC lock
 /// when `strict_tcp_lock` is on.
 pub async fn enable_kill_switch() -> Result<String, String> {

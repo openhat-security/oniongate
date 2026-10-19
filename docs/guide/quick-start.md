@@ -39,6 +39,10 @@ With **Smart Connect** enabled, OnionGate tries:
 2. your saved BridgeDB lines, if any, for up to 55 seconds;
 3. the bundled Snowflake transport for up to 75 seconds.
 
+OnionGate locks the network while it connects, and that lock drops clearnet UDP
+and DNS. Snowflake and meek need both, so Smart Connect skips them while the
+lock is on. On a censored network, add obfs4 or vanilla bridges instead.
+
 It never downloads bridge lines from third-party collectors. The selected
 strategy and reason are stored locally so the UI can explain what happened.
 

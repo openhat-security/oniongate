@@ -349,6 +349,23 @@ pub fn ensure_data_dir() -> Result<PathBuf, String> {
     Ok(base)
 }
 
+/// Bridge lines the managed torrc will actually load for these settings. Empty
+/// when bridges are off. Smart Connect's `builtin:snowflake` strategy swaps in
+/// the bundled Snowflake lines regardless of what the user saved.
+///
+/// Kept pure so the lock-compatibility checks in [`super::endpoints`] see the
+/// same transports Tor will be told to launch.
+pub fn active_bridge_lines(settings: &crate::settings::AppSettings) -> Vec<String> {
+    if !settings.bridges_enabled {
+        return Vec::new();
+    }
+    if settings.last_connect_strategy == "builtin:snowflake" {
+        super::bridges::bundled_defaults("snowflake")
+    } else {
+        settings.bridge_lines.clone()
+    }
+}
+
 fn write_managed_torrc(app_dir: &Path) -> Result<PathBuf, String> {
     let data_dir = app_dir.join("tor-data");
     let torrc = app_dir.join("torrc");
@@ -378,12 +395,8 @@ fn write_managed_torrc(app_dir: &Path) -> Result<PathBuf, String> {
         extra.push_str(&format!("MiddleNodes {}\n", settings.middle_nodes.trim()));
     }
 
-    let active_bridge_lines = if settings.last_connect_strategy == "builtin:snowflake" {
-        super::bridges::bundled_defaults("snowflake")
-    } else {
-        settings.bridge_lines.clone()
-    };
-    if settings.bridges_enabled && !active_bridge_lines.is_empty() {
+    let active_bridge_lines = active_bridge_lines(&settings);
+    if !active_bridge_lines.is_empty() {
         let needed = super::pt::transports_from_bridge_lines(&active_bridge_lines);
         if !needed.is_empty() {
             let plugins = super::pt::client_transport_plugin_lines(&needed)?;
@@ -695,6 +708,35 @@ pub async fn stop_tor(managed: &mut Option<Child>) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_bridge_lines_empty_when_bridges_are_off() {
+        let mut s = crate::settings::AppSettings::default();
+        s.bridges_enabled = false;
+        s.last_connect_strategy = "builtin:snowflake".into();
+        s.bridge_lines = vec!["Bridge 198.51.100.20:443 FINGERPRINT".into()];
+        assert!(active_bridge_lines(&s).is_empty());
+    }
+
+    #[test]
+    fn active_bridge_lines_use_bundled_snowflake_for_smart_connect_strategy() {
+        let mut s = crate::settings::AppSettings::default();
+        s.bridges_enabled = true;
+        s.last_connect_strategy = "builtin:snowflake".into();
+        s.bridge_lines = vec!["Bridge 198.51.100.20:443 FINGERPRINT".into()];
+        let lines = active_bridge_lines(&s);
+        assert_eq!(lines, super::super::bridges::bundled_defaults("snowflake"));
+        assert!(lines.iter().all(|l| l.starts_with("Bridge snowflake ")));
+    }
+
+    #[test]
+    fn active_bridge_lines_use_saved_lines_otherwise() {
+        let mut s = crate::settings::AppSettings::default();
+        s.bridges_enabled = true;
+        s.last_connect_strategy = "bridges".into();
+        s.bridge_lines = vec!["Bridge 198.51.100.20:443 FINGERPRINT".into()];
+        assert_eq!(active_bridge_lines(&s), s.bridge_lines);
+    }
 
     #[test]
     fn managed_torrc_binds_tor_browser_default_ports() {

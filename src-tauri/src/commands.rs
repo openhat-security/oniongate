@@ -317,6 +317,11 @@ pub fn set_bridges_enabled(enabled: bool) -> Result<AppSettings, String> {
 pub async fn apply_tor_config(state: State<'_, AppState>) -> Result<String, String> {
     // Bridges / PT / exit pin need a managed restart so torrc is authoritative.
     // Lock clearnet for the restart window so apps cannot race onto a direct path.
+    // That lock drops UDP and DNS, so refuse Snowflake/meek up front instead of
+    // restarting into a bootstrap that can't finish.
+    if let Some(refusal) = crate::connect::udp_lock_refusal(&settings::load(), true) {
+        return Err(refusal);
+    }
     let _ = crate::session::set_phase(crate::session::SessionPhase::Connecting, None);
     let lock_msg = crate::firewall::arm_for_transition().await?;
     let mut guard = state.managed_tor.lock().await;
@@ -598,6 +603,16 @@ pub async fn apply_scanned_bridges(
     })?;
 
     if tor::socks_reachable() || enable {
+        // A live kill switch or transition lock drops UDP and DNS. Keep the
+        // saved lines but don't restart Tor into a bootstrap that can't finish.
+        if let Some(refusal) =
+            crate::connect::udp_lock_refusal(&settings::load(), crate::firewall::udp_lock_active())
+        {
+            return Err(format!(
+                "Saved {} bridge(s) but did not restart Tor: {refusal}",
+                settings::load().bridge_lines.len()
+            ));
+        }
         let mut guard = state.managed_tor.lock().await;
         let msg = tor::restart_managed(&mut guard).await?;
         return Ok(format!(
