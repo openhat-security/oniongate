@@ -7,6 +7,8 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.6-alpha.1] - 2026-10-19
+
 ### Fixed
 
 - Smart Connect no longer tries Snowflake or meek while the network lock is on.
@@ -14,6 +16,17 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   10% and burned the 75-second timeout. Smart Connect now skips them and says
   why. With Smart Connect off, starting or applying a Snowflake or meek config
   under the lock is refused up front instead of timing out.
+- Linux egress leak monitor now sees live sockets (`ss -tuapnH`) and parses the
+  Netid column, so established clearnet connections are no longer invisible.
+- Tor expert-bundle download falls back to `archive.torproject.org` when
+  `dist.torproject.org` 404s on an older pin, so clean CI/local builds work.
+- Headless `start` no longer exits 1 when there is no D-Bus session for GNOME
+  proxy writes; Tor-up is enough when the proxy backend is unsupported.
+- A failed `start` releases the transition network lock unless a kill switch /
+  fail-closed NIC lock is armed, so host DNS/UDP are not left blocked.
+- Corrupt `settings.json` fails closed instead of silently loading weak defaults.
+- Reopen-bundle path policy uses POSIX string rules on every OS so Windows CI
+  no longer rejects valid ledger paths.
 
 ### Changed
 
