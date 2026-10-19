@@ -218,6 +218,11 @@ async fn status() -> i32 {
     println!("bridge_count={}", s.bridge_lines.len());
     println!("connection_mode={}", s.connection_mode);
     println!("kill_switch={}", s.kill_switch);
+    let lock = crate::firewall::network_lock_status();
+    println!("network_lock_active={}", lock.active);
+    if lock.active {
+        println!("network_lock_detail={}", lock.detail);
+    }
     println!("exit_country={}", s.exit_country);
     let recovery = crate::session::recovery_status();
     println!("session_phase={:?}", recovery.phase);
@@ -254,7 +259,54 @@ async fn start() -> i32 {
             std::mem::forget(managed_singbox);
             0
         }
-        Err(e) => fail(e),
+        Err(e) => {
+            let settings = settings::load();
+            let fail_closed = settings.kill_switch || settings.strict_tcp_lock;
+            let lock = crate::firewall::network_lock_status();
+            match failed_start_lock_action(lock.active, fail_closed) {
+                FailedStartLockAction::Release => {
+                    // The user did not ask to stay locked. Leaving the
+                    // transition lock armed blocks clearnet UDP/QUIC, IPv6 and
+                    // system DNS for the whole host, so release it and return to
+                    // the pre-start state instead of silently breaking the
+                    // machine's networking.
+                    match crate::firewall::disarm_after_transition().await {
+                        Ok(_) => eprintln!(
+                            "note: start failed, so the transition network lock was released and host DNS/UDP are restored."
+                        ),
+                        Err(de) => eprintln!(
+                            "warning: start failed and the transition network lock could not be released ({de}); clearnet UDP/QUIC, IPv6 and system DNS stay blocked host-wide. Run `oniongate-cli stop`."
+                        ),
+                    }
+                }
+                FailedStartLockAction::KeepArmed => eprintln!(
+                    "note: the transition network lock stays armed because a kill switch or NIC lock is enabled, so clearnet UDP/QUIC, IPv6 and system DNS remain blocked host-wide. Run `oniongate-cli stop` to restore the network."
+                ),
+                FailedStartLockAction::Nothing => {}
+            }
+            fail(e)
+        }
+    }
+}
+
+/// What to do with the transition network lock when `start` fails.
+#[derive(Debug, PartialEq, Eq)]
+enum FailedStartLockAction {
+    /// Armed, and the user did not opt into fail-closed: release it so host
+    /// DNS/UDP are restored.
+    Release,
+    /// Armed, and a kill switch or NIC lock is on: keep it (fail-closed) and
+    /// tell the user how to clear it.
+    KeepArmed,
+    /// Not armed; nothing to do.
+    Nothing,
+}
+
+fn failed_start_lock_action(lock_active: bool, fail_closed: bool) -> FailedStartLockAction {
+    match (lock_active, fail_closed) {
+        (false, _) => FailedStartLockAction::Nothing,
+        (true, false) => FailedStartLockAction::Release,
+        (true, true) => FailedStartLockAction::KeepArmed,
     }
 }
 
@@ -457,6 +509,26 @@ mod tests {
     fn bare_invocation_defaults_to_status() {
         let cli = Cli::try_parse_from(["oniongate"]).unwrap();
         assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn failed_start_releases_lock_only_when_not_fail_closed() {
+        assert_eq!(
+            failed_start_lock_action(true, false),
+            FailedStartLockAction::Release
+        );
+        assert_eq!(
+            failed_start_lock_action(true, true),
+            FailedStartLockAction::KeepArmed
+        );
+        assert_eq!(
+            failed_start_lock_action(false, false),
+            FailedStartLockAction::Nothing
+        );
+        assert_eq!(
+            failed_start_lock_action(false, true),
+            FailedStartLockAction::Nothing
+        );
     }
 
     #[test]
