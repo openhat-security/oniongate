@@ -34,7 +34,32 @@ fn unquote(value: &str) -> String {
     value.trim().trim_matches('\'').to_string()
 }
 
+/// GNOME proxy settings only take effect when a D-Bus session (and therefore a
+/// dconf backend) is present. On a headless server `gsettings set` returns
+/// success but the write is discarded, so `start` would set the proxy, fail to
+/// verify it, and exit non-zero. Detect that case so callers can skip the step.
+fn session_bus_available() -> bool {
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
+        return true;
+    }
+    if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+        if std::path::Path::new(&dir).join("bus").exists() {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn get_status() -> ProxyStatus {
+    if !session_bus_available() {
+        return ProxyStatus {
+            supported: false,
+            enabled: false,
+            detail: "no D-Bus session; GNOME proxy settings are not writable".into(),
+            host: SOCKS_HOST.into(),
+            port: SOCKS_PORT,
+        };
+    }
     let mode = match gsettings_get("org.gnome.system.proxy", "mode") {
         Ok(m) => unquote(&m),
         Err(e) => {
@@ -139,4 +164,33 @@ pub fn disable(saved: &mut SavedProxyState) -> Result<String, String> {
 
     gsettings_set("org.gnome.system.proxy", "mode", "'none'")?;
     Ok("Disabled GNOME system proxy".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_session_bus_reports_unsupported() {
+        let prev_dbus = std::env::var_os("DBUS_SESSION_BUS_ADDRESS");
+        let prev_runtime = std::env::var_os("XDG_RUNTIME_DIR");
+        std::env::remove_var("DBUS_SESSION_BUS_ADDRESS");
+        // Point XDG_RUNTIME_DIR at a dir with no `bus` socket.
+        let tmp = std::env::temp_dir().join("oniongate-proxy-test-nobus");
+        let _ = std::fs::create_dir_all(&tmp);
+        std::env::set_var("XDG_RUNTIME_DIR", &tmp);
+
+        let status = get_status();
+        assert!(!status.supported, "headless host must report unsupported");
+        assert!(status.detail.contains("D-Bus"));
+
+        match prev_dbus {
+            Some(v) => std::env::set_var("DBUS_SESSION_BUS_ADDRESS", v),
+            None => std::env::remove_var("DBUS_SESSION_BUS_ADDRESS"),
+        }
+        match prev_runtime {
+            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
+            None => std::env::remove_var("XDG_RUNTIME_DIR"),
+        }
+    }
 }

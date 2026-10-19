@@ -231,6 +231,22 @@ async fn maybe_auto_enable_proxy(
             "{msg}. System SOCKS was not applied: Tor's local SOCKS listener is not reachable"
         ));
     }
+    // On a host with no system-proxy backend (a headless Linux server with no
+    // GNOME gsettings, for example) there is nothing to point at the SOCKS
+    // listener and nothing to contain. Skip the step with a warning instead of
+    // failing the whole start, so the documented server CLI flow still works.
+    // Tor is up and its SOCKS listener is reachable; clients can use it directly.
+    let backend = proxy::get_status();
+    if !backend.supported {
+        crate::logs::append(format!(
+            "System proxy skipped: no backend on this host ({})",
+            backend.detail
+        ));
+        return Ok(format!(
+            "{msg}. No system proxy backend on this host ({}); skipped.              Point clients at Tor's SOCKS listener on {}:{} directly.",
+            backend.detail, backend.host, backend.port
+        ));
+    }
     let mut saved = saved_proxy
         .lock()
         .map_err(|_| "State lock poisoned".to_string())?;
