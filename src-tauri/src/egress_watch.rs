@@ -970,7 +970,7 @@ fn collect_macos() -> Result<Vec<RawFlow>, String> {
 #[cfg(target_os = "linux")]
 fn collect_ss() -> Result<Vec<RawFlow>, String> {
     let output = Command::new("ss")
-        .args(["-tulpnH"])
+        .args(["-tuapnH"])
         .output()
         .map_err(|e| format!("Could not list sockets (ss): {e}"))?;
     if !output.status.success() {
@@ -1194,7 +1194,12 @@ fn parse_ss_line(line: &str) -> Option<RawFlow> {
     if parts.len() < 5 {
         return None;
     }
-    let (state_or_recv, local_idx) = if parts[0].chars().all(|c| c.is_ascii_digit()) {
+    // `ss -tuapnH` prints `Netid State Recv-Q Send-Q Local Peer Process`.
+    // Older callers fed `Recv-Q Send-Q Local Peer` or `State Recv-Q ...`.
+    let netid = matches!(parts[0], "tcp" | "udp" | "tcp6" | "udp6");
+    let (state_or_recv, local_idx) = if netid {
+        (parts[1], 4usize)
+    } else if parts[0].chars().all(|c| c.is_ascii_digit()) {
         ("ESTAB", 2usize)
     } else {
         (parts[0], 3usize)
@@ -1202,7 +1207,10 @@ fn parse_ss_line(line: &str) -> Option<RawFlow> {
     if parts.len() <= local_idx + 1 {
         return None;
     }
-    let proto = if line.contains("udp") || parts[0].eq_ignore_ascii_case("UNCONN") {
+    let proto = if parts[0].starts_with("udp")
+        || (!netid && line.contains("udp"))
+        || state_or_recv.eq_ignore_ascii_case("UNCONN")
+    {
         "udp"
     } else {
         "tcp"
@@ -1316,12 +1324,15 @@ fn parse_endpoint(spec: &str) -> Option<(IpAddr, u16)> {
     if let Some(port) = spec.strip_prefix("*:") {
         return Some((IpAddr::V4(Ipv4Addr::UNSPECIFIED), port.parse().ok()?));
     }
+    let port_of = |p: &str| if p == "*" { Some(0) } else { p.parse().ok() };
     if let Some(rest) = spec.strip_prefix('[') {
         let (ip, port) = rest.split_once("]:")?;
-        return Some((canonicalize_ip(ip.parse().ok()?), port.parse().ok()?));
+        let ip = ip.split('%').next().unwrap_or(ip);
+        return Some((canonicalize_ip(ip.parse().ok()?), port_of(port)?));
     }
     let (ip, port) = spec.rsplit_once(':')?;
-    Some((canonicalize_ip(ip.parse().ok()?), port.parse().ok()?))
+    let ip = ip.split('%').next().unwrap_or(ip);
+    Some((canonicalize_ip(ip.parse().ok()?), port_of(port)?))
 }
 
 #[cfg(test)]
@@ -1399,6 +1410,22 @@ mDNS     7  adam 4u  IPv4 0x4 0t0 UDP *:5353
         assert_eq!(rows[2].local_port, 9050);
         assert!(rows[3].listen);
         assert_eq!(rows[3].proto, "udp");
+    }
+
+    #[test]
+    fn parse_ss_netid_columns_from_tuapn() {
+        let est = r#"tcp   ESTAB  0      0      172.30.0.2:44956  3.92.129.183:443 users:(("node",pid=6664,fd=10))"#;
+        let flow = parse_ss_line(est).expect("established tcp line");
+        assert_eq!(flow.proto, "tcp");
+        assert!(!flow.listen);
+        assert_eq!(flow.remote.to_string(), "3.92.129.183");
+        assert_eq!(flow.remote_port, 443);
+        assert_eq!(flow.pid, 6664);
+        let udp = r#"udp   UNCONN 0      0      127.0.0.1:9053    0.0.0.0:*        users:(("tor",pid=1,fd=11))"#;
+        let flow = parse_ss_line(udp).expect("udp line");
+        assert_eq!(flow.proto, "udp");
+        assert!(flow.listen);
+        assert_eq!(flow.local_port, 9053);
     }
 
     #[test]
