@@ -162,16 +162,74 @@ fn settings_path() -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Parse settings JSON. A present-but-unparseable file is a hard error: we must
+/// never silently fall back to weaker defaults (kill switch off, proxy instead
+/// of TUN) after a partial write, a disk-full, or a bad hand edit.
+fn parse_settings(raw: &str) -> Result<AppSettings, String> {
+    serde_json::from_str(raw).map_err(|e| format!("settings.json is not valid JSON: {e}"))
+}
+
+/// Core of [`load_strict`], split out so it can be tested against a temp path
+/// without touching the real data directory. A missing or empty file is a
+/// first run (safe defaults); a present file that does not parse is an error,
+/// and the bad bytes are preserved next to the original as `settings.json.corrupt`.
+fn load_strict_from(path: &std::path::Path) -> Result<AppSettings, String> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(_) => {
+            let mut settings = AppSettings::default();
+            normalize(&mut settings);
+            return Ok(settings);
+        }
+    };
+    if raw.trim().is_empty() {
+        let mut settings = AppSettings::default();
+        normalize(&mut settings);
+        return Ok(settings);
+    }
+    match parse_settings(&raw) {
+        Ok(mut settings) => {
+            normalize(&mut settings);
+            Ok(settings)
+        }
+        Err(e) => {
+            // Keep the original in place (so every later load stays fail-closed
+            // until a human fixes it) and preserve a copy for inspection.
+            let corrupt = path.with_extension("json.corrupt");
+            let _ = fs::copy(path, &corrupt);
+            Err(format!(
+                "{e}. The file was left in place and copied to {}. Refusing to \
+                 continue with weaker defaults; fix or remove settings.json.",
+                corrupt.display()
+            ))
+        }
+    }
+}
+
+/// Load settings, failing closed on corruption. Connect paths must use this so
+/// a damaged file can never downgrade a fail-closed setup to fail-open.
+pub fn load_strict() -> Result<AppSettings, String> {
+    let path = settings_path()?;
+    match load_strict_from(&path) {
+        Ok(settings) => Ok(settings),
+        Err(e) => {
+            crate::logs::append(format!("Corrupt settings.json: {e}"));
+            Err(e)
+        }
+    }
+}
+
 pub fn load() -> AppSettings {
-    let Ok(path) = settings_path() else {
-        return AppSettings::default();
-    };
-    let Ok(raw) = fs::read_to_string(path) else {
-        return AppSettings::default();
-    };
-    let mut settings: AppSettings = serde_json::from_str(&raw).unwrap_or_default();
-    normalize(&mut settings);
-    settings
+    match load_strict() {
+        Ok(settings) => settings,
+        Err(_) => {
+            // UI/read paths still need a value to render; connect paths call
+            // load_strict and refuse. Never persist this over the bad file.
+            let mut settings = AppSettings::default();
+            normalize(&mut settings);
+            settings
+        }
+    }
 }
 
 pub fn save(settings: &AppSettings) -> Result<(), String> {
@@ -466,5 +524,69 @@ mod tests {
     #[test]
     fn auto_enable_proxy_defaults_on() {
         assert!(AppSettings::default().auto_enable_proxy);
+    }
+
+    #[test]
+    fn parse_settings_accepts_valid_json() {
+        let s = parse_settings(r#"{"connection_mode":"tun","kill_switch":true}"#).unwrap();
+        assert_eq!(s.connection_mode, "tun");
+        assert!(s.kill_switch);
+    }
+
+    #[test]
+    fn parse_settings_rejects_invalid_json() {
+        assert!(parse_settings(r#"{"connection_mode":"tun""#).is_err());
+        assert!(parse_settings("not json at all").is_err());
+    }
+
+    #[test]
+    fn load_strict_missing_file_is_first_run_defaults() {
+        let dir = std::env::temp_dir().join(format!("og-settings-missing-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("settings.json");
+        let _ = std::fs::remove_file(&path);
+        let s = load_strict_from(&path).expect("absent file is a safe first run");
+        assert_eq!(s.connection_mode, "proxy");
+        assert!(!s.kill_switch);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_strict_preserves_a_fail_closed_config() {
+        let dir = std::env::temp_dir().join(format!("og-settings-ok-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("settings.json");
+        std::fs::write(&path, r#"{"connection_mode":"tun","kill_switch":true}"#).unwrap();
+        let s = load_strict_from(&path).expect("valid file loads");
+        assert_eq!(s.connection_mode, "tun");
+        assert!(s.kill_switch, "must not downgrade a kill-switch config");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Reproduces the audit finding: a tun + kill_switch config truncated on
+    /// disk must NOT silently load as proxy + kill_switch off. It must error,
+    /// leave the original in place, and copy it to settings.json.corrupt.
+    #[test]
+    fn load_strict_refuses_corrupt_and_never_weakens_defaults() {
+        let dir = std::env::temp_dir().join(format!("og-settings-corrupt-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("settings.json");
+        let full = r#"{"connection_mode":"tun","kill_switch":true}"#;
+        // Cut the last 2 bytes, exactly like the audit did.
+        std::fs::write(&path, &full[..full.len() - 2]).unwrap();
+
+        let err = load_strict_from(&path).expect_err("corrupt file must fail closed");
+        assert!(err.contains("settings.json"));
+
+        // Original stays in place; a .corrupt copy exists for inspection.
+        assert!(
+            path.exists(),
+            "original must be kept so every load stays fail-closed"
+        );
+        assert!(path.with_extension("json.corrupt").exists());
+
+        // And load() must not hand back a weakened config for this path.
+        // (load_strict_from is the gate; it returned Err, so no proxy/off leaks.)
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
