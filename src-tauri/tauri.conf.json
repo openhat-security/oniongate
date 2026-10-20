@@ -69,7 +69,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM2RDA4MkM5MkI1QTJGMzYKUldRMkwxb3J5WUxReGx6d09wZUpmbXcxWkxjRzllYTRTM3JhczdYRGVKVmh3LzU0anVsOFlPN1YK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVDMjcyMjcxODg1QjI2ODQKUldTRUpsdUljU0luWEFjR1B3NllwRURKWWhCYXRNY1Y2MS94OG9teU1qdTkrUzF6dnpteU5Wd3oK",
       "endpoints": [
         "https://github.com/openhat-security/oniongate/releases/latest/download/latest.json"
       ]
