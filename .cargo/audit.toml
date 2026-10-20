@@ -1,0 +1,17 @@
+# cargo-audit configuration.
+#
+# The RUSTSEC-2026-0367/0368/0369 advisories are against `zip`, pulled in
+# transitively by `tauri-plugin-updater` 2.x, which pins `zip = "^4"`. The fix
+# (zip >= 9.0.0) only exists for the Tauri 3 plugin line; there is no Tauri 2
+# release that takes it, so we cannot upgrade without moving the whole app to
+# Tauri 3. The advisories concern `ZipArchive::extract` symlink/SUID handling on
+# attacker-controlled archives; the updater verifies the minisign signature on
+# the downloaded bundle before it is ever extracted, so extraction only runs on
+# content signed with our (now rotated) key. Revisit when tauri-plugin-updater
+# ships a 2.x that moves to zip >= 9.
+[advisories]
+ignore = [
+  "RUSTSEC-2026-0367",
+  "RUSTSEC-2026-0368",
+  "RUSTSEC-2026-0369",
+]
