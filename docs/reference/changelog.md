@@ -24,6 +24,10 @@ OnionGate uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Rewrote the README so a new user can build and run it: real toolchain
+  versions, the Tor archive workaround for `make setup`, a working CLI
+  session, Linux caveats, data locations, and troubleshooting. Fixed the CLI
+  build command in the install guide (`--bin oniongate-cli`).
 - Docs and GitHub release notes mark plain `v0.2.0`…`v0.2.4` as superseded:
   install only the current `*-alpha*` build. Older releases stay published as
   prereleases (not Latest) so checksums and assets remain reachable.

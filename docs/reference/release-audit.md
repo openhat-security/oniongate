@@ -18,6 +18,7 @@ command lines into commit subjects.
 
 Range: `v0.2.4..HEAD`.
 
+- `ab158ac fix: harden macOS Intel pkg build against codesign pipefail`
 - `ccb54a3 fix: unblock Linux verify and Intel pkg for 0.2.5-alpha.1`
 - `20b8e02 chore: sync generated changelog docs for 0.2.5-alpha.1`
 - `39f520a fix: rustfmt so Actions can ship 0.2.5-alpha.1`
