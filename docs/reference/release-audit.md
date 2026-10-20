@@ -14,14 +14,16 @@ not a substitute for the user-facing [changelog](/reference/changelog).
 Do not paste bridge lines, onion keys, credentials, public IPs, or full
 command lines into commit subjects.
 
-## 0.2.5-alpha.1
+## 0.2.6-alpha.1
 
-Range: `v0.2.4..HEAD`.
+Range: `v0.2.5-alpha.1..HEAD`.
 
-- `ccb54a3 fix: unblock Linux verify and Intel pkg for 0.2.5-alpha.1`
-- `20b8e02 chore: sync generated changelog docs for 0.2.5-alpha.1`
-- `39f520a fix: rustfmt so Actions can ship 0.2.5-alpha.1`
-- `5725d71 docs: mark v0.2.0–v0.2.4 as superseded for alpha installs`
-- `a004cbc docs: refresh the 0.2.5-alpha.1 commit-subject audit trail`
-- `81bfb18 chore: prepare 0.2.5-alpha.1 release`
-- `b0fa3c7 fix(windows): embed Common-Controls v6 so cargo test can load`
+- `3dc9b75 fix(updater): point tauri.conf.json at the rotated signing key`
+- `e1ba0eb chore: cut 0.2.6-alpha.1 (audit fixes; unsigned publish held) (#12)`
+- `fcd58d4 fix: skip Snowflake and meek under the UDP network lock`
+- `cb07bdf fix(settings): fail closed on a corrupt settings.json (#9)`
+- `ba16648 fix(linux): restore host DNS/UDP after a failed start unless fail-closed (#8)`
+- `908dd27 fix(linux): let start succeed on a headless host with no proxy backend (#7)`
+- `baa3d73 fix(linux): census established sockets and parse ss Netid column (#5)`
+- `d4a382e fix(ci): evaluate reopen bundle paths with POSIX semantics on every OS`
+- `71c418a fix(deps): fall back to archive.torproject.org for the Tor bundle`
